@@ -30,6 +30,7 @@ To use the repository, follow these steps to set up the required datasets:
 4. Start the Docker container:
    ```bash
    docker run -it --rm -v $(pwd):/scratch fastsim:latest
+   cd scratch
    ```
 5. Generate enough pileup events:
    - **Note:** You will need `N` pileup events for each real event, where `N` can range from 20 to 200, depending on the target LHC run conditions. More details can be found in the [pileup documentation](https://cp3.irmp.ucl.ac.be/projects/delphes/wiki/WorkBook/PileUp).
@@ -44,7 +45,7 @@ To use the repository, follow these steps to set up the required datasets:
      ```
    - Convert the ROOT file to a pileup format:
      ```bash
-     root2pileup MinBias100k.pileup MinBias100k.root
+     root2pileup MinBias.pileup MinBias100k.root
      ```
 
 6. Generate the processes
@@ -87,13 +88,41 @@ set nevents 100000
 set gseed 42
 done
 ```
-Create these files in the docker container and run (in the following only for the dijet):`/opt/MG5_aMC_v2_7_2/bin/mg5_aMC madgraph_dijet.script`.
+Create these files in the docker container and run (in the following only for the dijet): `/opt/MG5_aMC_v2_7_2/bin/mg5_aMC madgraph_dijet.script`.
 This produces a lhe file which is needed as input for the next step.
 
 6. Running Delphes:
 
 To produce the final root files run `cp /opt/delphes/cards/delphes_card_ATLAS_PileUp.tcl delphes_card_ATLAS_PileUp.tcl` (adjust therein the path to the previously generated pileup file and the card can be also CMS).
-Now adjust the path to the lhe file in the file `pythia_card` (and also the number of events to match the number of events in the lhe file). In my case this would be `dijet_process/Events/run_01/unweighted_events.lhe.gz`. Then run `DelphesPythia8 delphes_card_ATLAS_PileUp.tcl pythia_card output.root`
+Now adjust the path to the lhe file in the file `pythia_card` (and also the number of events to match the number of events in the lhe file).
+
+**pythia_card (has to be created in the docker):**
+```bash
+! 1) Settings used in the main program.
+
+Main:numberOfEvents = 10000         ! number of events to generate
+Main:timesAllowErrors = 3          ! how many aborts before run stops
+
+! 2) Settings related to output in init(), next() and stat().
+
+Init:showChangedSettings = on      ! list changed settings
+Init:showChangedParticleData = off ! list changed particle data
+Next:numberCount = 10000             ! print message every n events
+Next:numberShowInfo = 1            ! print event information n times
+Next:numberShowProcess = 1         ! print process record n times
+Next:numberShowEvent = 1           ! print event record n times
+
+! Adjust tau decays
+15:onMode  = off
+15:onIfAny = 11 13
+
+! 3) Set the input LHE file
+
+Beams:frameType = 4
+Beams:LHEF = /scratch/WZ_process/Events/run_01/unweighted_events.lhe.gz
+```
+
+In my case this would be `dijet_process/Events/run_01/unweighted_events.lhe.gz`. Then run `DelphesPythia8 delphes_card_ATLAS_PileUp.tcl pythia_card output.root`
 This produces an output file with 20k dijet events (with a mean pileup of 50 events - that’s also something you can change in the file delphes_card_ATLAS_PileUp.tcl).
 
 

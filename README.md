@@ -1,12 +1,10 @@
-![](Downloads/HEPINFO_logo.svg)
+<img src="docs/_static/HEPINFO_logo.svg" alt="HEPINFO_logo" width="500"/>
 
 HEPINFO is a framework featuring models designed for decorrelating physics data using axol1tl with mutual information. The repository is under active development, and the name "miaxol1tl" is currently a working title.
 
 ## Introduction
 
 This repository contains the code supporting the poster [**Adaptive Machine Learning on FPGAs: Bridging Simulated and Real-World Data in High-Energy Physics**](https://indico.nikhef.nl/event/4875/contributions/20369/) presented at the **EuCAIFCon24** conference. The code is designed to facilitate machine learning-based decorrelation techniques in high-energy physics, focusing on simulated and real-world datasets.
-
-![HEPINFO Logo](HEPINFO_logo.svg)
 
 ## Data
 
@@ -21,13 +19,13 @@ To use the repository, follow these steps to set up the required datasets:
    cd data
    ```
 2. Build the Docker image (adapted from [FastSimulation](https://github.com/schmittc/FastSimulation)):
-   - Standard:
+   - Linux:
      ```bash
-     docker build -f Dockerfile -t fastsim:latest DockerImage
+     docker build -f Dockerfile -t fastsim:latest .
      ```
-   - M1/2/3 Mac:
+   - M1/2/3 Mac (the image builds but running madgraph does not work):
      ```bash
-     docker build --platform linux/x86_64 -f Dockerfile -t fastsim:latest DockerImage
+     docker build --platform linux/x86_64 -f Dockerfile -t fastsim:latest .
      ```
 4. Start the Docker container:
    ```bash

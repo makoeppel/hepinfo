@@ -1,0 +1,29 @@
+[project]
+name = "hepinfo"
+version = "0.0.1"
+authors = [
+  { name="Marius Koeppel", email="mkoepp@phys.ethz.ch" },
+  { name="Mattia Cerrato" },
+  { name="Thea Aarrestad" },
+  { name="Fernandez Rodino Brais" },
+]
+description = "Mutual Information techniques for decorrelation of physics data"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["hepinfo"]
+package-dir = {"" = "."}
+
+[project.urls]
+Homepage = "https://github.com/makoeppel/miaxol1tl"
+Issues = "https://github.com/makoeppel/miaxol1tl/issues"

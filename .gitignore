@@ -1,0 +1,5 @@
+build/*
+dist/*
+hepinfo/*.egg-info/*
+hepinfo.egg-info/*
+venv/*

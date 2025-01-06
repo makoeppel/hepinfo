@@ -52,7 +52,7 @@ class MiVAE(BaseEstimator, keras.Model):
         Stochastically Quantized Variational Auto Endcoder which has a bernoulli
         activation at the latent layer to max/min the mutual infromation.
     """
-    __module__ = "Custom>BinaryVAE"
+    __module__ = "Custom>MiVAE"
 
     def __init__(self,
         hidden_layers=None,
@@ -236,11 +236,11 @@ class MiVAE(BaseEstimator, keras.Model):
         with tf.GradientTape() as tape:
             z_mean, z_log_var, z, z_sample = self.encoder(x)
             reconstruction = self.decoder(z)
-            reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
+            reconstruction_loss = keras.losses.BinaryCrossentropy()(x, reconstruction)
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
             mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
-            total_loss = (1-self.beta_param)*reconstruction_loss + kl_loss + self.gamma * mi_loss
+            total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -262,11 +262,11 @@ class MiVAE(BaseEstimator, keras.Model):
 
         z_mean, z_log_var, z, z_sample = self.encoder(x)
         reconstruction = self.decoder(z)
-        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
+        reconstruction_loss = keras.losses.BinaryCrossentropy()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
-        total_loss = (1-self.beta_param)*reconstruction_loss + kl_loss + self.gamma * mi_loss
+        total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
         self.kl_loss_tracker.update_state(kl_loss)
@@ -347,7 +347,7 @@ class MiVAE(BaseEstimator, keras.Model):
         # last layer
         x = layers.Dense(
             self.inputshape[0],
-            activation=self.activation,
+            activation="sigmoid",
             kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
             activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
         )(x)

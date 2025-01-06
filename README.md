@@ -23,7 +23,7 @@ To use the repository, follow these steps to set up the required datasets:
      ```bash
      docker build -f Dockerfile -t fastsim:latest .
      ```
-   - M1/2/3 Mac (the image builds but running madgraph does not work):
+   - TODO: M1/2/3 Mac (the image builds but running madgraph does not work):
      ```bash
      docker build --platform linux/x86_64 -f Dockerfile -t fastsim:latest .
      ```
@@ -48,7 +48,8 @@ To use the repository, follow these steps to set up the required datasets:
      root2pileup MinBias.pileup MinBias100k.root
      ```
 
-6. Generate the processes
+5. Generate the processes:
+
 So after this stage you have a file with 100k events. Now let’s move on to generating the actual events. Generate the processes -- you want both dijet and ttbar:
 
 **madgraph_dijet.script:**
@@ -88,12 +89,25 @@ set nevents 100000
 set gseed 42
 done
 ```
+
+**madgraph_higgs.script:**
+```bash
+import model heft
+define v = z w+ w-
+generate p p > h j j $$v QCD=0, h > l+ l- vl vl~
+output higgs_process_42
+launch higgs_process_42
+done
+set nevents 100000
+set gseed 42
+done
+```
 Create these files in the docker container and run (in the following only for the dijet): `/opt/MG5_aMC_v2_7_2/bin/mg5_aMC madgraph_dijet.script`.
 This produces a lhe file which is needed as input for the next step.
 
 6. Running Delphes:
 
-To produce the final root files run `cp /opt/delphes/cards/delphes_card_ATLAS_PileUp.tcl delphes_card_ATLAS_PileUp.tcl` (adjust therein the path to the previously generated pileup file and the card can be also CMS).
+To produce the final root files run `cp /opt/delphes/cards/delphes_card_CMS_PileUp.tcl delphes_card_CMS_PileUp.tcl` (adjust therein the path to the previously generated pileup file and the card can be also ATLAS).
 Now adjust the path to the lhe file in the file `pythia_card` (and also the number of events to match the number of events in the lhe file).
 
 **pythia_card (has to be created in the docker):**
@@ -122,11 +136,17 @@ Beams:frameType = 4
 Beams:LHEF = /scratch/WZ_process/Events/run_01/unweighted_events.lhe.gz
 ```
 
-In my case this would be `dijet_process/Events/run_01/unweighted_events.lhe.gz`. Then run `DelphesPythia8 delphes_card_ATLAS_PileUp.tcl pythia_card output.root`
-This produces an output file with 20k dijet events (with a mean pileup of 50 events - that’s also something you can change in the file delphes_card_ATLAS_PileUp.tcl).
+In the dijet case this would be `dijet_process/Events/run_01/unweighted_events.lhe.gz`. Then run `DelphesPythia8 delphes_card_CMS_PileUp.tcl pythia_card output.root`
+This produces an output file with 100k dijet events. Repeat this step for ttbar and higgs and store the data inside the data folder (dijet.root, ttbar.root and higgs.root).
 
+6. Generate the dataset from the root files:
 
-
+```bash
+cd data
+python extract_data.py
+```
+We have 57 variables: MET, 4 electrons, 4 muons and 10 jets these are 19 objects, times 3 parameters -> 57 vars. In addition we read the pile-up as "Vertex_size"
+So the generated files have the following columns: vertex_size,misMET,misEta,misPhi,e0PT,e0Eta,e0Phi,...,m0PT,m0Eta,m0Phi,...,j0PT,j0Eta,j0Phi,...
 
 
 ## Code for τ → 3μ

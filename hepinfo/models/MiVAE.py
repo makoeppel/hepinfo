@@ -3,6 +3,7 @@ import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
 from sklearn.base import BaseEstimator
+import six
 
 
 class BernoulliSampling(tf.keras.layers.Layer):
@@ -54,38 +55,28 @@ class MiVAE(BaseEstimator, keras.Model):
     __module__ = "Custom>BinaryVAE"
 
     def __init__(self,
-        hidden_layers=[64, 32],
+        hidden_layers=None,
         activation='relu',
         latent_dims=64,
-        #kernel_regularizer=0.00001,
         kernel_regularizer=0.01,
         num_samples=10,
-        #drop_out=0,
         drop_out=0.2,
-        #Baixo beta PARA QUE A KL LOSS IMPORTE MENOS!
-        #beta_param=0.0001,
-        beta_param=0.01,
+        beta_param=1,
         gamma=1,
-        #necesito este batch size para que se minimice ben a KL, se o subo comeza a subir a KL a épocas altas
-        batch_size=2048,
-        #learning_rate=0.0001,
+        batch_size=256,
         learning_rate=0.0001,
         learning_rate_decay_rate=1,
         learning_rate_decay_steps=1000,
         optimizer="Adam",
         epoch=60,
-        #de normal son 20 épocas
         verbose=0,
+        patience=3,
+        monitor="kl_loss",
         validation_size=0,
         run_eagerly=False,
         quantize=False,
-        #quantize=True, probo a ver que onda ao non cuantizar
         **kwargs
     ):
-        
-
-        #PROBABLY A GOOD SET OF HPS:
-        #optimizer': 'Adam', 'learning_rate': 0.0001, 'latent_dims': 16, 'kernel_regularizer': 0.001, 'hidden_layers': [128, 64, 32], 'gamma': 1, 'epoch': 20, 'beta_param': 0.001, 'batch_size': 2048, 'activation': 'relu'}
 
         super().__init__(**kwargs)
 
@@ -100,7 +91,10 @@ class MiVAE(BaseEstimator, keras.Model):
         self.num_samples = num_samples
         self.latent_dims = latent_dims
         self.activation = activation
-        self.kernel_regularizer = kernel_regularizer
+        if drop_out > 0:
+            self.kernel_regularizer = 0
+        else:
+            self.kernel_regularizer = kernel_regularizer
         self.drop_out = drop_out
         self.beta_param = beta_param
         self.gamma = gamma
@@ -118,6 +112,8 @@ class MiVAE(BaseEstimator, keras.Model):
         self.optimizer_name = optimizer
         self.epoch = epoch
         self.verbose = verbose
+        self.patience = patience
+        self.monitor = monitor
         self.validation_size = validation_size
         self.run_eagerly = run_eagerly
         self.inputshape = None
@@ -293,23 +289,14 @@ class MiVAE(BaseEstimator, keras.Model):
         # layers
         x = encoder_inputs
         for layer in self.hidden_layers:
-            
-            #ORIGINAL CODE THAT I COULD REPLACE FOR THE GLOROTUNIFORM
+
             x = layers.Dense(
                 layer,
                 activation=self.activation,
                 kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
                 activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
             )(x)
-            
-            #Extra added (to delete if it does not work)
-            #x=layers.Dense(
-            #layer,
-            #activation=self.activation,
-            #kernel_initializer=initializers.initializers.GlorotUniform(),
-            #bias_initializer=initializers.Zeros()
-            #)(x)
-            #More original code
+
             if self.drop_out > 0:
                 x = layers.Dropout(self.drop_out)(x)
 
@@ -331,7 +318,6 @@ class MiVAE(BaseEstimator, keras.Model):
         z_sample = z
         if self.quantize:
             z_sample = BernoulliSampling(self.num_samples, name="bernoulli")(z_sample)
-            # z = QActivation("bernoulli")(z)
 
         # build encoder
         encoder = keras.Model(
@@ -339,7 +325,8 @@ class MiVAE(BaseEstimator, keras.Model):
             [z_mean, z_log_var, z, z_sample],
             name="encoder"
         )
-        encoder.summary()
+        if self.verbose > 0:
+            encoder.summary()
         return encoder
 
     def get_decoder(self):
@@ -371,7 +358,8 @@ class MiVAE(BaseEstimator, keras.Model):
             x,
             name="decoder"
         )
-        decoder.summary()
+        if self.verbose > 0:
+            decoder.summary()
         return decoder
 
     def fit(self, x, s):
@@ -379,7 +367,7 @@ class MiVAE(BaseEstimator, keras.Model):
         # get input shape
         self.inputshape = [x.shape[1]]
 
-        # fill up batch size NOTE: MMD loss can have NaN values so batch_size should be not to small
+        # fill up batch size NOTE: loss can have NaN values so batch_size should be not to small
         if len(x) % self.batch_size != 0:
             x = np.concatenate([x, x[:self.batch_size-len(x) % self.batch_size]])
             s = np.concatenate([s, s[:self.batch_size-len(s) % self.batch_size]])
@@ -394,19 +382,22 @@ class MiVAE(BaseEstimator, keras.Model):
             staircase=False
         )
 
-        if type(self.optimizer) is str:
-            if self.optimizer == "Adam":
-                self.optimizer = tf.keras.optimizers.Adam
-            if self.optimizer == "SGD":
-                self.optimizer = tf.keras.optimizers.SGD
-            if self.optimizer == "Nadam":
-                raise NotImplementedError
+        if self.optimizer == "Adam":
+            self.optimizer = tf.keras.optimizers.Adam
+        if self.optimizer == "SGD":
+            self.optimizer = tf.keras.optimizers.SGD
+        if self.optimizer == "Nadam":
+            self.optimizer = tf.keras.optimizers.Nadam
 
-        #CÓDIGO OG
-        
         self.compile(
             optimizer=self.optimizer(lr_schedule),
             run_eagerly=self.run_eagerly
+        )
+
+        callback = keras.callbacks.EarlyStopping(
+            monitor=self.monitor,
+            mode='min',
+            patience=self.patience
         )
 
         history = super().fit(
@@ -414,9 +405,9 @@ class MiVAE(BaseEstimator, keras.Model):
             s,
             epochs=self.epoch,
             batch_size=self.batch_size,
-            verbose=self.verbose
+            verbose=self.verbose,
+            callbacks=[callback]
         )
-        #METO RETURN HISTORY PARA PLOTS
         return history
 
     def score(self, x, y):
@@ -426,8 +417,8 @@ class MiVAE(BaseEstimator, keras.Model):
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = self.mutual_information_bernoulli_loss(y, z_sample)
-        total_loss = (1-self.beta_param)*reconstruction_loss + kl_loss + self.gamma * mi_loss
-        return +total_loss.numpy() #RETURNS SCALAR! (úsase para comprobar cal dá menor loss co grid/random search)
+        total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
+        return total_loss.numpy()
 
     def score_vector(self, x):
         z_mean, z_log_var, z, z_sample = self.encoder(x)
@@ -435,9 +426,9 @@ class MiVAE(BaseEstimator, keras.Model):
         reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_sum(kl_loss, axis=1)
-        total_loss = (1-self.beta_param)*reconstruction_loss + kl_loss
-        losses=[reconstruction_loss.numpy(), kl_loss.numpy(), total_loss.numpy()]
-        return losses #RETURNS VECTOR! THERE IS NO MUTUAL INFORMATION LOSS (ONLY RELEVANT BEFORE TO GET SCORE FOR GRID/RANDOM SEARCH!)
+        total_loss = reconstruction_loss + kl_loss
+        losses = [reconstruction_loss.numpy(), kl_loss.numpy(), total_loss.numpy()]
+        return losses
 
     def get_mean(self, x):
         return self.encoder(x)[0]
@@ -481,19 +472,6 @@ class MiVAE(BaseEstimator, keras.Model):
                 drop_key.append(key)
 
         for key in drop_key:
-            try:
-                d.pop(key)
-            except KeyError:
-                pass
-
-        for key in ['optimizer', 'nan_loss', 'built', 'inputs',
-                    'input_names', 'output_names', 'stop_training'
-                    'history', 'train_function', 'test_function',
-                    'predict_function', 'loss_tracker_a', 'loss_tracker_b',
-                    'loss_tracker_cls', 'model_a', 'model_b', 'ranker',
-                    'compiled_loss', 'compiled_metrics', 'loss', 'history',
-                    'outputs'
-                    ]:
             try:
                 d.pop(key)
             except KeyError:

@@ -2,10 +2,7 @@
 name = "hepinfo"
 version = "0.0.1"
 authors = [
-  { name="Marius Koeppel", email="mkoepp@phys.ethz.ch" },
-  { name="Mattia Cerrato" },
-  { name="Thea Aarrestad" },
-  { name="Fernandez Rodino Brais" },
+  { name="Anonymous", email="Anonymous@Anonymous.com" }
 ]
 description = "Mutual Information techniques for decorrelation of physics data"
 readme = "README.md"
@@ -25,5 +22,5 @@ packages = ["hepinfo"]
 package-dir = {"" = "."}
 
 [project.urls]
-Homepage = "https://github.com/makoeppel/miaxol1tl"
-Issues = "https://github.com/makoeppel/miaxol1tl/issues"
+Homepage = "https://anonymous.com"
+Issues = "https://anonymous.com"

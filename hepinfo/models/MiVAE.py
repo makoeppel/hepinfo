@@ -236,7 +236,7 @@ class MiVAE(BaseEstimator, keras.Model):
         with tf.GradientTape() as tape:
             z_mean, z_log_var, z, z_sample = self.encoder(x)
             reconstruction = self.decoder(z)
-            reconstruction_loss = keras.losses.BinaryCrossentropy()(x, reconstruction)
+            reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
             mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
@@ -262,7 +262,7 @@ class MiVAE(BaseEstimator, keras.Model):
 
         z_mean, z_log_var, z, z_sample = self.encoder(x)
         reconstruction = self.decoder(z)
-        reconstruction_loss = keras.losses.BinaryCrossentropy()(x, reconstruction)
+        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
@@ -382,12 +382,13 @@ class MiVAE(BaseEstimator, keras.Model):
             staircase=False
         )
 
-        if self.optimizer == "Adam":
-            self.optimizer = tf.keras.optimizers.Adam
-        if self.optimizer == "SGD":
-            self.optimizer = tf.keras.optimizers.SGD
-        if self.optimizer == "Nadam":
-            self.optimizer = tf.keras.optimizers.Nadam
+        if type(self.optimizer) is str:
+            if self.optimizer == "Adam":
+                self.optimizer = tf.keras.optimizers.Adam
+            if self.optimizer == "SGD":
+                self.optimizer = tf.keras.optimizers.SGD
+            if self.optimizer == "Nadam":
+                self.optimizer = tf.keras.optimizers.Nadam
 
         self.compile(
             optimizer=self.optimizer(lr_schedule),

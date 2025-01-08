@@ -6,12 +6,15 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 import numpy as np
 
+from tensorflow.python.framework import smart_cond as tf_utils
+
 from pyparsing import delimitedList
 from pyparsing import Group
 from pyparsing import Optional
 from pyparsing import Regex
 from pyparsing import Suppress
 
+import re
 
 def _create_variable_name(attr_name, var_name=None):
   """Creates variable name.
@@ -92,8 +95,17 @@ class BaseQuantizer(tf.Module):
   def non_trainable_variables(self):
     return ()
 
+def stochastic_round(x, precision=0.5):
+  """Performs stochastic rounding to the first decimal point."""
+  scale = 1.0 / precision
+  scale_x = x * scale
+  fraction = scale_x - tf.floor(scale_x)
 
-def _round_through(x, use_stochastic_rounding=False, precision=0.5):
+  result = tf.where(fraction < tf.random.uniform(tf.shape(x)),
+                    tf.math.floor(scale_x), tf.math.ceil(scale_x))
+  return result / scale
+
+def _round_through(x, use_stochastic_rounding=False, precision=0.5, training=True):
   """Rounds x but using straight through estimator.
 
   We use the trick from [Sergey Ioffe](http://stackoverflow.com/a/36480182).
@@ -119,13 +131,15 @@ def _round_through(x, use_stochastic_rounding=False, precision=0.5):
     Rounded tensor.
   """
   if use_stochastic_rounding:
-    output = tf_utils.smart_cond(
-        K.learning_phase(),
-        lambda: x + tf.stop_gradient(-x + stochastic_round(x, precision)),
-        lambda: x + tf.stop_gradient(-x + tf.round(x)))
+      output = tf.cond(
+          tf.cast(training, tf.bool),
+          lambda: tf.add(x, tf.stop_gradient(-x + stochastic_round(x, precision))),
+          lambda: tf.add(x, tf.stop_gradient(-x + tf.round(x)))
+      )
   else:
-    output = x + tf.stop_gradient(-x + tf.round(x))
-  return output
+      output = tf.add(x, tf.stop_gradient(-x + tf.round(x)))
+
+  return tf.convert_to_tensor(output)
 
 
 def _get_scaling_axis(scale_axis, len_axis):
@@ -236,6 +250,226 @@ def set_internal_sigmoid(mode):
 
 
 set_internal_sigmoid(_default_sigmoid_type)
+
+class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
+  """Computes a quantized relu to a number of bits.
+
+  Modified from:
+
+  [https://github.com/BertMoons/QuantizedNeuralNetworks-Keras-Tensorflow]
+
+  Assume h(x) = +1 with p = sigmoid(x), -1 otherwise, the expected value of
+  h(x) is:
+
+  E[h(x)] = +1 P(p <= sigmoid(x)) - 1 P(p > sigmoid(x))
+          = +1 P(p <= sigmoid(x)) - 1 ( 1 - P(p <= sigmoid(x)) )
+          = 2 P(p <= sigmoid(x)) - 1
+          = 2 sigmoid(x) - 1, if p is sampled from a uniform distribution U[0,1]
+
+  If use_sigmoid is 0, we just keep the positive numbers up to
+  2**integer * (1 - 2**(-bits)) instead of normalizing them, which is easier
+  to implement in hardware.
+
+  Attributes:
+    bits: number of bits to perform quantization.
+    integer: number of bits to the left of the decimal point.
+    use_sigmoid: if true, we apply sigmoid to input to normalize it.
+    negative_slope: slope when activation < 0, needs to be power of 2.
+    use_stochastic_rounding: if true, we perform stochastic rounding.
+    relu_upper_bound: A float representing an upper bound of the unquantized
+      relu. If None, we apply relu without the upper bound when
+      "is_quantized_clip" is set to false (true by default).
+      Note: The quantized relu uses the quantization parameters (bits and
+      integer) to upper bound. So it is important to set relu_upper_bound
+      appropriately to the quantization parameters. "is_quantized_clip"
+      has precedence over "relu_upper_bound" for backward compatibility.
+    is_quantized_clip: A boolean representing whether the inputs are clipped to
+      the maximum value represented by the quantization parameters. This
+      parameter is deprecated, and the default is set to True for backwards
+      compatibility. Users are encouraged to use "relu_upper_bound" instead.
+    qnoise_factor: float. a scalar from 0 to 1 that represents the level of
+      quantization noise to add. This controls the amount of the quantization
+      noise to add to the outputs by changing the weighted sum of
+      (1 - qnoise_factor)*unquantized_x + qnoise_factor*quantized_x.
+    var_name: String or None. A variable name shared between the tf.Variables
+      created in the build function. If None, it is generated automatically.
+    use_ste: Bool. Whether to use "straight-through estimator" (STE) method or
+        not.
+    use_variables: Bool. Whether to make the quantizer variables to be dynamic
+      tf.Variables or not.
+
+  Returns:
+    Function that performs relu + quantization to bits >= 0.
+  """
+
+  def __init__(self,
+               bits=8,
+               integer=0,
+               use_sigmoid=0,
+               negative_slope=0.0,
+               use_stochastic_rounding=False,
+               relu_upper_bound=None,
+               is_quantized_clip=True,
+               qnoise_factor=1.0,
+               var_name=None,
+               use_ste=True,
+               use_variables=False):
+    super().__init__()
+    self.bits = bits
+    self.integer = integer
+    self.use_sigmoid = use_sigmoid
+    self.negative_slope = negative_slope
+    self.use_stochastic_rounding = use_stochastic_rounding
+    self.relu_upper_bound = relu_upper_bound
+    self.is_quantized_clip = is_quantized_clip
+    self.qnoise_factor = qnoise_factor
+    self.use_ste = use_ste
+    assert negative_slope >= 0.0
+    if negative_slope != 0.0:
+      assert np.mod(np.log2(negative_slope), 1) == 0
+    self.var_name = var_name
+    self.use_variables = use_variables
+
+  def __str__(self):
+    # Converts Tensors to printable strings by converting to a numpy array and
+    # then using regex to remove brackets when there is only one integer bit
+    integer_bits = re.sub(
+        r"\[(\d)\]", r"\g<1>",
+        str(self.integer.numpy() if isinstance(self.integer, tf.Variable
+                                              ) else self.integer))
+
+    flags = [str(self.bits), integer_bits]
+    if self.use_sigmoid or self.use_stochastic_rounding:
+      flags.append(str(int(self.use_sigmoid)))
+    if self.negative_slope:
+      flags.append(str(self.negative_slope))
+    if self.use_stochastic_rounding:
+      flags.append(str(int(self.use_stochastic_rounding)))
+    return "quantized_relu(" + ",".join(flags) + ")"
+
+  def __call__(self, x, training=True):
+    if not self.built:
+      self.build(var_name=self.var_name, use_variables=self.use_variables)
+
+    non_sign_bits = self.bits - (self.negative_slope != 0.0)
+    x = K.cast(x, dtype="float32")
+    m = K.cast(K.pow(2, non_sign_bits), dtype="float32")
+    m_i = K.cast(K.pow(2, self.integer), dtype="float32")
+
+    # is_quantized_clip has precedence over relu_upper_bound for backward
+    # compatibility.
+    m_f = K.cast(
+        K.pow(
+            tf.constant(2., tf.float32),
+            K.cast(self.integer, dtype="float32") - non_sign_bits),
+        dtype="float32")
+    if self.is_quantized_clip:
+      x_u = tf.where(x <= m_i - m_f, K.relu(x, alpha=self.negative_slope),
+                     tf.ones_like(x) * (m_i - m_f))
+    elif self.relu_upper_bound is not None:
+      x_u = tf.where(x <= self.relu_upper_bound,
+                     K.relu(x, alpha=self.negative_slope),
+                     tf.ones_like(x) * self.relu_upper_bound)
+    else:
+      x_u = K.relu(x, alpha=self.negative_slope)
+
+    if self.use_sigmoid:
+      p = _sigmoid(x / m_i) * m
+      xq = m_i * tf.keras.backend.clip(
+          2.0 * (_round_through(p, self.use_stochastic_rounding, training=training) / m) - 1.0,
+          0.0, 1.0 - 1.0 / m)
+      if self.negative_slope > 0:
+        neg_factor = 1 / (self.negative_slope * m)
+        xq = xq + m_i * self.negative_slope * tf.keras.backend.clip(
+            2.0 * (_round_through(p * self.negative_slope,
+                                  self.use_stochastic_rounding, training=training) * neg_factor) -
+            1.0, -1.0, 0.0)
+    else:
+      p = x * m / m_i
+      xq = m_i * tf.keras.backend.clip(
+          _round_through(p, self.use_stochastic_rounding, training=training) / m, 0.0,
+          1.0 - 1.0 / m)
+      if self.negative_slope > 0:
+        neg_factor = 1 / (self.negative_slope * m)
+        xq = xq + m_i * self.negative_slope * (
+            tf.keras.backend.clip(
+                _round_through(p * self.negative_slope,
+                               self.use_stochastic_rounding, training=training) * neg_factor, -1.0,
+                0.0))
+
+    if self.relu_upper_bound and not self.is_quantized_clip:
+      xq = tf.where(xq <= self.relu_upper_bound, xq,
+                    tf.ones_like(xq) * self.relu_upper_bound)
+
+    if self.use_ste:
+      return x_u + tf.stop_gradient(self.qnoise_factor * (-x_u + xq))
+    else:
+      return (1 - self.qnoise_factor) * x_u + tf.stop_gradient(
+          self.qnoise_factor * xq)
+
+  def max(self):
+    """Get the maximum value that quantized_relu can represent."""
+    unsigned_bits = self.bits - (self.negative_slope != 0.0)
+
+    if unsigned_bits > 0:
+      return max(
+          1.0,
+          np.array(
+              K.pow(2.0, K.cast(self.integer, dtype="float32")),
+              dtype="float32"))
+    else:
+      return 1.0
+
+  def min(self):
+    """Get the minimum value that quantized_relu can represent."""
+    if self.negative_slope == 0.0:
+      return 0.0
+
+    unsigned_bits = self.bits - 1
+    if unsigned_bits > 0:
+      return min(
+          -0.0, -self.negative_slope * np.array(
+              K.pow(2.0, K.cast(self.integer, dtype="float32")),
+              dtype="float32"))
+    else:
+      return -1.0
+
+  def range(self):
+    """Returns a list of all values that quantized_relu can represent
+
+      ordered by their binary representation ascending.
+    """
+    assert self.use_sigmoid == 0  # current unsupported
+    assert self.negative_slope == 0  # # unsupported unsupported
+    x = np.asarray(range(2**self.bits))
+    return x * np.array(
+        K.pow(2.0, -self.bits + K.cast(self.integer, dtype="float32")),
+        dtype="float32")
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)
+
+  def get_config(self):
+    config = {
+        "bits":
+            self.bits,
+        "integer":
+            self.integer.numpy() if isinstance(self.integer, tf.Variable) else
+            self.integer,
+        "use_sigmoid":
+            self.use_sigmoid,
+        "negative_slope":
+            self.negative_slope,
+        "use_stochastic_rounding":
+            self.use_stochastic_rounding,
+        "relu_upper_bound":
+            self.relu_upper_bound,
+        "qnoise_factor":
+            self.qnoise_factor.numpy() if isinstance(
+                self.qnoise_factor, tf.Variable) else self.qnoise_factor
+    }
+    return config
 
 class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
   """Computes a Bernoulli sample with probability sigmoid(x).
@@ -506,7 +740,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
                    str(int(self.use_stochastic_rounding)))
     return "quantized_bits(" + ",".join(flags) + ")"
 
-  def __call__(self, x):
+  def __call__(self, x, training=True):
     """Computes fixedpoint quantization of x."""
     if not self.built:
       self.build(var_name=self.var_name, use_variables=self.use_variables)
@@ -587,7 +821,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
     if unsigned_bits > 0:
       p = x * m / m_i
       xq = m_i * K.clip(
-          _round_through(p, self.use_stochastic_rounding, precision=1.0),
+          _round_through(p, self.use_stochastic_rounding, precision=1.0, training=training),
           self.keep_negative  * (-m + self.symmetric), m - 1) / m
     else:
       xq = tf.sign(x)

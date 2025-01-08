@@ -3,7 +3,7 @@ import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
 from keras.regularizers import L2
-from qkeras import QDense, QActivation
+from hepinfo.models.qkerasV3 import QDense, QActivation
 from sklearn.base import BaseEstimator
 import six
 
@@ -77,7 +77,7 @@ class MiVAE(BaseEstimator, keras.Model):
         monitor="kl_loss",
         validation_size=0,
         run_eagerly=False,
-        quantize=False,
+        mi_loss=False,
         **kwargs
     ):
 
@@ -121,7 +121,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.validation_size = validation_size
         self.run_eagerly = run_eagerly
         self.inputshape = None
-        self.quantize = quantize
+        self.mi_loss = mi_loss
 
     def mutual_information_bernoulli_loss(self, y_true, y_pred):
         """
@@ -238,12 +238,17 @@ class MiVAE(BaseEstimator, keras.Model):
         # data = [x, s]
         x, s = data
         with tf.GradientTape() as tape:
-            z_mean, z_log_var, z, z_sample = self.encoder(x)
+            if self.mi_loss:
+                z_mean, z_log_var, z, z_sample = self.encoder(x, training=True)
+            else:
+                z_mean, z_log_var, z = self.encoder(x, training=True)
             reconstruction = self.decoder(z)
             reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
-            mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
+            mi_loss = 0
+            if self.mi_loss:
+                mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
             total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
@@ -263,13 +268,17 @@ class MiVAE(BaseEstimator, keras.Model):
     def test_step(self, data):
         # data = [x, s]
         x, s = data
-
-        z_mean, z_log_var, z, z_sample = self.encoder(x)
+        if self.mi_loss:
+            z_mean, z_log_var, z, z_sample = self.encoder(x, training=False)
+        else:
+            z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
         reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
-        mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
+        mi_loss = 0
+        if self.mi_loss:
+            mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
         total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
@@ -282,8 +291,11 @@ class MiVAE(BaseEstimator, keras.Model):
             "mi_loss": self.mi_loss_tracker.result(),
         }
 
-    def call(self, x):
-        z_mean, z_log_var, z, z_sample = self.encoder(x)
+    def call(self, x, training=True):
+        if self.mi_loss:
+            z_mean, z_log_var, z, z_sample = self.encoder(x, training)
+        else:
+            z_mean, z_log_var, z = self.encoder(x, training)
         reconstruction = self.decoder(z)
         return reconstruction
 
@@ -346,16 +358,22 @@ class MiVAE(BaseEstimator, keras.Model):
             )(x)
 
         z = Sampling(self.latent_dims)([z_mean, z_log_var])
-        z_sample = z
-        if self.quantize:
-            z_sample = BernoulliSampling(self.num_samples, name="bernoulli")(z_sample)
+        if self.mi_loss:
+            z_sample = BernoulliSampling(self.num_samples, name="bernoulli")(z)
 
-        # build encoder
-        encoder = keras.Model(
-            encoder_inputs,
-            [z_mean, z_log_var, z, z_sample],
-            name="encoder"
-        )
+            # build encoder
+            encoder = keras.Model(
+                encoder_inputs,
+                [z_mean, z_log_var, z, z_sample],
+                name="encoder"
+            )
+        else:
+            # build encoder
+            encoder = keras.Model(
+                encoder_inputs,
+                [z_mean, z_log_var, z],
+                name="encoder"
+            )
         if self.verbose > 0:
             encoder.summary()
         return encoder
@@ -443,17 +461,25 @@ class MiVAE(BaseEstimator, keras.Model):
         return history
 
     def score(self, x, y):
-        z_mean, z_log_var, z, z_sample = self.encoder(x)
+        if self.mi_loss:
+            z_mean, z_log_var, z, z_sample = self.encoder(x, training=False)
+        else:
+            z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
         reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
-        mi_loss = self.mutual_information_bernoulli_loss(y, z_sample)
+        mi_loss = 0
+        if self.mi_loss:
+            mi_loss = self.mutual_information_bernoulli_loss(y, z_sample)
         total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
         return total_loss.numpy()
 
     def score_vector(self, x):
-        z_mean, z_log_var, z, z_sample = self.encoder(x)
+        if self.mi_loss:
+            z_mean, z_log_var, z, _ = self.encoder(x, training=False)
+        else:
+            z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
         reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
@@ -463,13 +489,13 @@ class MiVAE(BaseEstimator, keras.Model):
         return losses
 
     def get_mean(self, x):
-        return self.encoder(x)[0]
+        return self.encoder(x, training=False)[0]
 
     def get_sigma(self, x):
-        return self.encoder(x)[1]
+        return self.encoder(x, training=False)[1]
 
     def get_latentspace(self, x):
-        return self.encoder(x)[2]
+        return self.encoder(x, training=False)[2]
 
     def get_params(self, deep=True):
         out = dict()

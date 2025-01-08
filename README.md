@@ -148,7 +148,6 @@ python extract_data.py
 We have 57 variables: MET, 4 electrons, 4 muons and 10 jets these are 19 objects, times 3 parameters -> 57 vars. In addition we read the pile-up as "Vertex_size"
 So the generated files have the following columns: vertex_size,misMET,misEta,misPhi,e0PT,e0Eta,e0Phi,...,m0PT,m0Eta,m0Phi,...,j0PT,j0Eta,j0Phi,...
 
-
 ## Code for τ → 3μ
 
 The primary code for analyzing the τ → 3μ process is detailed in the `notebooks/tau_3mu.ipynb` notebook. For the VHDL simulation of the Bernoulli layer, an example testbench is available in the `tb` folder.

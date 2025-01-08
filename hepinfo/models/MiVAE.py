@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
+from keras.regularizers import L2
+from qkeras import QDense, QActivation
 from sklearn.base import BaseEstimator
 import six
 
@@ -57,6 +59,7 @@ class MiVAE(BaseEstimator, keras.Model):
     def __init__(self,
         hidden_layers=None,
         activation='relu',
+        use_qkeras=False,
         latent_dims=64,
         kernel_regularizer=0.01,
         num_samples=10,
@@ -91,6 +94,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.num_samples = num_samples
         self.latent_dims = latent_dims
         self.activation = activation
+        self.use_qkeras = use_qkeras
         if drop_out > 0:
             self.kernel_regularizer = 0
         else:
@@ -286,33 +290,60 @@ class MiVAE(BaseEstimator, keras.Model):
     def get_encoder(self):
         encoder_inputs = keras.Input(shape=self.inputshape)
 
+        if self.use_qkeras:
+            encoder_inputs = QActivation("quantized_bits(8,5,0)")(encoder_inputs)
+
         # layers
         x = encoder_inputs
         for layer in self.hidden_layers:
+            if self.use_qkeras:
+                x = QDense(
+                    layer,
+                    kernel_initializer="glorot_uniform",
+                    kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
+                    bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                    activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
+                )(x)
+            else:
+                x = layers.Dense(
+                    layer,
+                    activation=self.activation,
+                    kernel_regularizer=L2(self.kernel_regularizer),
+                    activity_regularizer=L2(self.kernel_regularizer)
+                )(x)
 
-            x = layers.Dense(
-                layer,
-                activation=self.activation,
-                kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-                activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
-            )(x)
-
-            if self.drop_out > 0:
-                x = layers.Dropout(self.drop_out)(x)
+                if self.drop_out > 0:
+                    x = layers.Dropout(self.drop_out)(x)
 
         # setup latent layers
-        z_mean = layers.Dense(
-            self.latent_dims,
-            name="z_mean",
-            kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-            activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
-        )(x)
-        z_log_var = layers.Dense(
-            self.latent_dims,
-            name="z_log_var",
-            kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-            activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
-        )(x)
+        if self.use_qkeras:
+            z_mean = QDense(
+                self.latent_dims,
+                name="z_mean",
+                kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
+                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
+            )(x)
+            z_log_var = QDense(
+                self.latent_dims,
+                name="z_log_var",
+                kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
+                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
+            )(x)
+        else:
+            z_mean = layers.Dense(
+                self.latent_dims,
+                name="z_mean",
+                kernel_regularizer=L2(self.kernel_regularizer),
+                activity_regularizer=L2(self.kernel_regularizer)
+            )(x)
+            z_log_var = layers.Dense(
+                self.latent_dims,
+                name="z_log_var",
+                kernel_regularizer=L2(self.kernel_regularizer),
+                activity_regularizer=L2(self.kernel_regularizer)
+            )(x)
 
         z = Sampling(self.latent_dims)([z_mean, z_log_var])
         z_sample = z
@@ -338,8 +369,8 @@ class MiVAE(BaseEstimator, keras.Model):
             x = layers.Dense(
                 layer,
                 activation=self.activation,
-                kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-                activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
+                kernel_regularizer=L2(self.kernel_regularizer),
+                activity_regularizer=L2(self.kernel_regularizer)
             )(x)
             if self.drop_out > 0:
                 x = layers.Dropout(self.drop_out)(x)
@@ -348,8 +379,8 @@ class MiVAE(BaseEstimator, keras.Model):
         x = layers.Dense(
             self.inputshape[0],
             activation="sigmoid",
-            kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-            activity_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer)
+            kernel_regularizer=L2(self.kernel_regularizer),
+            activity_regularizer=L2(self.kernel_regularizer)
         )(x)
 
         # build decoder

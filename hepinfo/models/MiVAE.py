@@ -240,15 +240,16 @@ class MiVAE(BaseEstimator, keras.Model):
         with tf.GradientTape() as tape:
             if self.mi_loss:
                 z_mean, z_log_var, z, z_sample = self.encoder(x, training=True)
+                reconstruction = self.decoder(z_sample)
             else:
                 z_mean, z_log_var, z = self.encoder(x, training=True)
-            reconstruction = self.decoder(z)
-            reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
+                reconstruction = self.decoder(z)
+            reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
             mi_loss = 0
             if self.mi_loss:
-                mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
+                mi_loss = self.mutual_information_bernoulli_loss(s, z)
             total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
 
         grads = tape.gradient(total_loss, self.trainable_weights)
@@ -270,15 +271,16 @@ class MiVAE(BaseEstimator, keras.Model):
         x, s = data
         if self.mi_loss:
             z_mean, z_log_var, z, z_sample = self.encoder(x, training=False)
+            reconstruction = self.decoder(z_sample)
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
-        reconstruction = self.decoder(z)
-        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
+            reconstruction = self.decoder(z)
+        reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = 0
         if self.mi_loss:
-            mi_loss = self.mutual_information_bernoulli_loss(s, z_sample)
+            mi_loss = self.mutual_information_bernoulli_loss(s, z)
         total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
@@ -294,9 +296,10 @@ class MiVAE(BaseEstimator, keras.Model):
     def call(self, x, training=True):
         if self.mi_loss:
             z_mean, z_log_var, z, z_sample = self.encoder(x, training)
+            reconstruction = self.decoder(z_sample)
         else:
             z_mean, z_log_var, z = self.encoder(x, training)
-        reconstruction = self.decoder(z)
+            reconstruction = self.decoder(z)
         return reconstruction
 
     def get_encoder(self):
@@ -463,15 +466,16 @@ class MiVAE(BaseEstimator, keras.Model):
     def score(self, x, y):
         if self.mi_loss:
             z_mean, z_log_var, z, z_sample = self.encoder(x, training=False)
+            reconstruction = self.decoder(z_sample)
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
-        reconstruction = self.decoder(z)
-        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
+            reconstruction = self.decoder(z)
+        reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = 0
         if self.mi_loss:
-            mi_loss = self.mutual_information_bernoulli_loss(y, z_sample)
+            mi_loss = self.mutual_information_bernoulli_loss(y, z)
         total_loss = reconstruction_loss + kl_loss + self.gamma * mi_loss
         return total_loss.numpy()
 
@@ -481,7 +485,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
-        reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
+        reconstruction_loss = (1 - self.beta_param) * tf.keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_sum(kl_loss, axis=1)
         total_loss = reconstruction_loss + kl_loss

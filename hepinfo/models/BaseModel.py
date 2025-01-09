@@ -233,12 +233,12 @@ class BaseModel(BaseEstimator):
                     name=f"{name}_{i}"
                 )(hidden_layers)
             if self.quantized_position[i]:
+                last_quantized = hidden_layers
                 hidden_layers = QActivation(
                     activation_binary,
                     activity_regularizer=kernel_regularizer,
                     name=f"qact_{name}_{i}"
                 )(hidden_layers)
-                last_quantized = hidden_layers
             if drop_out > 0:
                 hidden_layers = tf.keras.layers.Dropout(drop_out)(hidden_layers)
 

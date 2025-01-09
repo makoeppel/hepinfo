@@ -22,7 +22,7 @@ class BinaryMI(BaseModel):
                 quantized_position: list[bool] = [False, True, False],
                 batch_normalisation: bool = False,
                 activation_binary: str = 'bernoulli',
-                activation_nonbinary: str = 'sigmoid',
+                activation_nonbinary: str = 'tanh',
                 kernel_regularizer: float = 0.01,
                 drop_out: float = 0.,
                 gamma: float = 0.0,
@@ -241,10 +241,10 @@ class BinaryMI(BaseModel):
             index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
             loss = {
                 f"t_{len(self.hidden_layers)}": self.loss,
-                f"qact_t_{index_qact}": self.mutual_information_bernoulli_loss
+                f"t_{index_qact}": self.mutual_information_bernoulli_loss
             }
-            lossWeights = {f"t_{len(self.hidden_layers)}": float(1 - self.gamma), f"qact_t_{index_qact}": float(self.gamma)}
-            metrics = {f"t_{len(self.hidden_layers)}": 'AUC' if self.last_layer_size == 1 else 'acc', f"qact_t_{index_qact}": 'acc'}
+            lossWeights = {f"t_{len(self.hidden_layers)}": float(1 - self.gamma), f"t_{index_qact}": float(self.gamma)}
+            metrics = {f"t_{len(self.hidden_layers)}": 'AUC' if self.last_layer_size == 1 else 'acc', f"t_{index_qact}": 'acc'}
         else:
             outputs = self.out
             loss = [self.loss]
@@ -303,6 +303,14 @@ class BinaryMI(BaseModel):
             Returns:
                 None
         """
+
+        # get the correct numpy type
+        x = self.convert_array_to_float(x)
+        y = self.convert_array_to_float(y)
+        s = self.convert_array_to_float(s)
+
+        # input size
+        self.input_shape = (x.shape[1], )
 
         # convert for classifier output
         y_train = tf.keras.utils.to_categorical(y_train, self.last_layer_size)

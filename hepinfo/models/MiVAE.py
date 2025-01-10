@@ -60,6 +60,7 @@ class MiVAE(BaseEstimator, keras.Model):
         hidden_layers=None,
         activation='relu',
         use_qkeras=False,
+        input_quantized_bits="quantized_bits(16,6,0)",
         latent_dims=64,
         kernel_regularizer=0.01,
         num_samples=10,
@@ -95,6 +96,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.latent_dims = latent_dims
         self.activation = activation
         self.use_qkeras = use_qkeras
+        self.input_quantized_bits = input_quantized_bits
         if drop_out > 0:
             self.kernel_regularizer = 0
         else:
@@ -244,7 +246,7 @@ class MiVAE(BaseEstimator, keras.Model):
             else:
                 z_mean, z_log_var, z = self.encoder(x, training=True)
                 reconstruction = self.decoder(z)
-            reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
+            reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
             mi_loss = 0
@@ -275,7 +277,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
             reconstruction = self.decoder(z)
-        reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
+        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = 0
@@ -306,7 +308,7 @@ class MiVAE(BaseEstimator, keras.Model):
         encoder_inputs = keras.Input(shape=self.inputshape)
 
         if self.use_qkeras:
-            encoder_inputs = QActivation("quantized_bits(8,5,0)")(encoder_inputs)
+            encoder_inputs = QActivation(self.input_quantized_bits)(encoder_inputs)
 
         # layers
         x = encoder_inputs
@@ -316,7 +318,7 @@ class MiVAE(BaseEstimator, keras.Model):
                     layer,
                     kernel_initializer="glorot_uniform",
                     kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
-                    bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                    bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True, alpha=1)",
                     activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
                 )(x)
             else:
@@ -336,14 +338,14 @@ class MiVAE(BaseEstimator, keras.Model):
                 self.latent_dims,
                 name="z_mean",
                 kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
-                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True, alpha=1)",
                 activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
             )(x)
             z_log_var = QDense(
                 self.latent_dims,
                 name="z_log_var",
                 kernel_quantizer="quantized_bits(6, 2, 0, use_stochastic_rounding=True, alpha=1)",
-                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True,alpha=1)",
+                bias_quantizer="quantized_bits(10, 6, 0, use_stochastic_rounding=True, alpha=1)",
                 activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)"
             )(x)
         else:
@@ -470,7 +472,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
             reconstruction = self.decoder(z)
-        reconstruction_loss = (1 - self.beta_param) * keras.losses.MeanSquaredError()(x, reconstruction)
+        reconstruction_loss = keras.losses.MeanSquaredError()(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
         mi_loss = 0
@@ -485,7 +487,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
-        reconstruction_loss = (1 - self.beta_param) * tf.keras.losses.mse(x, reconstruction)
+        reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_sum(kl_loss, axis=1)
         total_loss = reconstruction_loss + kl_loss

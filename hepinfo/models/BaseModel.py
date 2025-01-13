@@ -11,7 +11,7 @@ import tensorflow as tf
 
 #from nptyping import NDArray
 from sklearn.base import BaseEstimator
-from models.qkerasV3 import QActivation
+from hepinfo.models.qkerasV3 import QActivation
 
 
 class BaseModel(BaseEstimator):
@@ -28,6 +28,7 @@ class BaseModel(BaseEstimator):
             batch_normalisation: bool = False,
             activation_binary: str = 'bernoulli',
             activation_nonbinary: str = 'sigmoid',
+            acitvation_last_layer: str = 'sigmoid',
             kernel_regularizer: float = 0.0,
             drop_out: float = 0,
             # Common HPs
@@ -60,6 +61,7 @@ class BaseModel(BaseEstimator):
         self.batch_normalisation = batch_normalisation
         self.activation_binary = activation_binary
         self.activation_nonbinary = activation_nonbinary
+        self.acitvation_last_layer = acitvation_last_layer
         self.kernel_regularizer = kernel_regularizer
         self.drop_out = drop_out
         self.batch_size = batch_size
@@ -253,7 +255,7 @@ class BaseModel(BaseEstimator):
         output_layer = self._get_cls_part(
             input_layer=hidden_layers,
             num_relevance_classes=self.last_layer_size,
-            feature_activation=self.activation_nonbinary,
+            feature_activation=self.acitvation_last_layer,
             kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
             name=name,
             index=len(hidden_layer)

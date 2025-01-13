@@ -5,10 +5,10 @@ CXX = g++
 CXXFLAGS = -std=c++11 -Wall -Wextra -O2
 
 # Target executable
-TARGET = bernoulli_lfsr_tb
+TARGET = bernoulli_layer_tb
 
 # Source files
-SRCS = bernoulli_lfsr.cpp testbench.cpp
+SRCS = bernoulli_layer.h bernoulli_layer_tb.cpp
 
 # Object files
 OBJS = $(SRCS:.cpp=.o)

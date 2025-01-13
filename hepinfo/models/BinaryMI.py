@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 import numpy as np
 
-from models.BaseModel import BaseModel
+from hepinfo.models.BaseModel import BaseModel
 
 
 class BinaryMI(BaseModel):
@@ -23,6 +23,7 @@ class BinaryMI(BaseModel):
                 batch_normalisation: bool = False,
                 activation_binary: str = 'bernoulli',
                 activation_nonbinary: str = 'tanh',
+                acitvation_last_layer: str = 'sigmoid',
                 kernel_regularizer: float = 0.01,
                 drop_out: float = 0.,
                 gamma: float = 0.0,
@@ -57,6 +58,7 @@ class BinaryMI(BaseModel):
             batch_normalisation=batch_normalisation,
             activation_binary=activation_binary,
             activation_nonbinary=activation_nonbinary,
+            acitvation_last_layer=acitvation_last_layer,
             kernel_regularizer=kernel_regularizer,
             drop_out=drop_out,
             # Common HPs
@@ -305,12 +307,12 @@ class BinaryMI(BaseModel):
         """
 
         # get the correct numpy type
-        x = self.convert_array_to_float(x)
-        y = self.convert_array_to_float(y)
-        s = self.convert_array_to_float(s)
+        x_train = self.convert_array_to_float(x_train)
+        y_train = self.convert_array_to_float(y_train)
+        s_train = self.convert_array_to_float(s_train)
 
         # input size
-        self.input_shape = (x.shape[1], )
+        self.input_shape = (x_train.shape[1], )
 
         # convert for classifier output
         y_train = tf.keras.utils.to_categorical(y_train, self.last_layer_size)

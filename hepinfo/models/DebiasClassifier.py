@@ -2,8 +2,8 @@ import numpy as np
 import tensorflow as tf
 
 import gc
-from models.BaseModel import *
-from models.GradReverse import GradReverse
+from hepinfo.models.BaseModel import *
+from hepinfo.models.GradReverse import GradReverse
 
 
 class DebiasClassifier(BaseModel):

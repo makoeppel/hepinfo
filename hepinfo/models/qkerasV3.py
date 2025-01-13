@@ -4,6 +4,8 @@ import warnings, logging, six
 
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from keras.src import backend
+from keras.src.utils import tracking
 import numpy as np
 
 from tensorflow.python.framework import smart_cond as tf_utils
@@ -628,7 +630,6 @@ class QActivation(tf.keras.layers.Layer):
   def get_prunable_weights(self):
     return []
 
-
 class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
   """Quantizes the number to a number of bits.
 
@@ -817,17 +818,26 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
     else:
       scale = self.alpha
 
+    def handle_unsigned_bits(x, m, m_i, unsigned_bits):
+        p = x * m / m_i
+        xq = m_i * tf.clip_by_value(
+            _round_through(p, self.use_stochastic_rounding, precision=1.0, training=training),
+            self.keep_negative * (-m + self.symmetric), m - 1) / m
+        return xq
+
+    def handle_binary_quantization(x, keep_negative):
+        xq = tf.sign(x)
+        xq += (1.0 - tf.abs(xq))
+        if not keep_negative:
+            xq = (xq + 1.0) / 2.0
+        return xq
+
     # quantized_bits with "1" bit becomes a binary implementation.
-    if unsigned_bits > 0:
-      p = x * m / m_i
-      xq = m_i * K.clip(
-          _round_through(p, self.use_stochastic_rounding, precision=1.0, training=training),
-          self.keep_negative  * (-m + self.symmetric), m - 1) / m
-    else:
-      xq = tf.sign(x)
-      xq += (1.0 - tf.abs(xq))
-      if not self.keep_negative:
-        xq = (xq + 1.0) / 2.0
+    xq = tf.cond(
+        unsigned_bits > 0,  # Condition
+        lambda: handle_unsigned_bits(x, m, m_i, unsigned_bits),  # True case
+        lambda: handle_binary_quantization(x, self.keep_negative),  # False case
+    )
 
     self.scale = scale
     xq = scale * xq
@@ -1375,3 +1385,68 @@ class QDense(tf.keras.layers.Dense):
 
   def get_prunable_weights(self):
     return [self.kernel]
+
+class quantized_sigmoid(BaseQuantizer):  # pylint: disable=invalid-name
+  """Computes a quantized sigmoid to a number of bits.
+
+  Attributes:
+    bits: number of bits to perform quantization.
+    symmetric: if true, we will have the same number of values for positive
+      and negative numbers.
+    use_real_sigmoid: if true, will use the sigmoid from Keras backend
+    use_stochastic_rounding: if true, we perform stochastic rounding.
+
+  Returns:
+    Function that performs sigmoid + quantization to bits in the range 0.0 to 1.0.
+  """
+
+  def __init__(self, bits=8, symmetric=False,
+               use_real_sigmoid=False,
+               use_stochastic_rounding=False):
+    super().__init__()
+    self.bits = bits
+    self.symmetric = symmetric
+    self.use_real_sigmoid = use_real_sigmoid
+    self.use_stochastic_rounding = use_stochastic_rounding
+
+  def __str__(self):
+    flags = [str(self.bits)]
+    if self.symmetric:
+      flags.append(str(int(self.symmetric)))
+    if self.use_real_sigmoid:
+      flags.append(str(int(self.use_real_sigmoid)))
+    if self.use_stochastic_rounding:
+      flags.append(str(int(self.use_stochastic_rounding)))
+    return "quantized_sigmoid(" + ",".join(flags) + ")"
+
+  def __call__(self, x):
+    x = K.cast_to_floatx(x)
+    m = K.cast_to_floatx(K.pow(2, self.bits))
+
+    p = K.sigmoid(x) if self.use_real_sigmoid else _sigmoid(x)
+
+    return tf.keras.backend.clip((_round_through(p*m, self.use_stochastic_rounding) / m),
+                                 (1.0 * self.symmetric) / m,
+                                 1.0 - 1.0 / m)
+
+  def max(self):
+    """Get the maximum value that quantized_sigmoid can represent."""
+    return 1.0 - 1.0 / pow(2, self.bits)
+
+  def min(self):
+    """Get the minimum value that quantized_sigmoid can represent."""
+    return (1.0 * self.symmetric) / pow(2, self.bits)
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)
+
+  def get_config(self):
+    config = {
+        "bits": self.bits,
+        "symmetric": self.symmetric,
+        "use_real_sigmoid": self.use_real_sigmoid,
+        "use_stochastic_rounding": self.use_stochastic_rounding
+    }
+    return config
+

@@ -6,6 +6,7 @@ from keras.regularizers import L2
 from hepinfo.models.qkerasV3 import QDense, QActivation, quantized_sigmoid
 from hepinfo.models.QuantFlow import TQDense, TQActivation
 from sklearn.base import BaseEstimator
+#from HGQ.layers import HDense, HQuantize
 import six
 
 class BernoulliSampling(tf.keras.layers.Layer):
@@ -69,6 +70,7 @@ class MiVAE(BaseEstimator, keras.Model):
     def __init__(self,
         hidden_layers=None,
         activation='relu',
+        use_hgq=False,
         use_qkeras=False,
         use_quantflow=False,
         init_quantized_bits=32,
@@ -117,6 +119,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.latent_dims = latent_dims
         self.activation = activation
         self.use_qkeras = use_qkeras
+        self.use_hgq = use_hgq
         self.use_quantflow = use_quantflow
         self.init_quantized_bits = init_quantized_bits
         self.input_quantized_bits = input_quantized_bits
@@ -287,15 +290,10 @@ class MiVAE(BaseEstimator, keras.Model):
             if self.mi_loss:
                 mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-            total_bops = 0
-            for layer in self.encoder.layers:
-                if isinstance(layer, TQDense):
-                    total_bops += layer.compute_bops()
-                if isinstance(layer, TQActivation):
-                    total_bops += layer.compute_bops()
-            total_bops *= self.alpha
+            total_bops = sum(layer.compute_bops() for layer in self.encoder.layers if hasattr(layer, 'compute_bops'))
+            total_bops_std = [layer.compute_bops_std() for layer in self.encoder.layers if hasattr(layer, 'compute_bops_std')]
 
-            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops
+            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops# - 0.001 * tf.reduce_mean(total_bops_std)
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -369,7 +367,8 @@ class MiVAE(BaseEstimator, keras.Model):
         encoder_inputs = keras.Input(shape=self.inputshape)
 
         if self.use_qkeras: x = QActivation(self.input_quantized_bits)(encoder_inputs)
-        if self.use_quantflow: x = TQActivation(self.inputshape, self.init_quantized_bits)(encoder_inputs)
+        if self.use_quantflow: x = TQActivation(self.inputshape, bits="random", alpha=self.alpha)(encoder_inputs)
+        if self.use_hgq: x = HQuantize(beta=3e-5)(encoder_inputs)
         if not self.use_qkeras and not self.use_quantflow: x = encoder_inputs
 
         for layer in self.hidden_layers:
@@ -384,9 +383,12 @@ class MiVAE(BaseEstimator, keras.Model):
             elif self.use_quantflow:
                 x = TQDense(
                     layer,
-                    init_bits=self.init_quantized_bits,
-                    activation="relu"
+                    init_bits="random",
+                    activation="relu",
+                    alpha=self.alpha
                 )(x)
+            elif self.use_hgq:
+                x = HDense(layer, activation="relu", beta=3e-5)(x)
             else:
                 x = layers.Dense(
                     layer,
@@ -413,18 +415,23 @@ class MiVAE(BaseEstimator, keras.Model):
                 kernel_quantizer=self.quantized_bits,
                 bias_quantizer=self.quantized_bits,
             )(x)
+        elif self.use_hgq:
+            z_mean = HDense(self.latent_dims, beta=3e-5)(x)
+            z_log_var = HDense(self.latent_dims, beta=3e-5)(x)
         elif self.use_quantflow:
             z_mean = TQDense(
                 self.latent_dims,
                 name="z_mean",
-                init_bits=self.init_quantized_bits,
-                activation="linear"
+                init_bits="random",
+                activation="linear",
+                alpha=self.alpha
             )(x)
             z_log_var = TQDense(
                 self.latent_dims,
                 name="z_log_var",
-                init_bits=self.init_quantized_bits,
-                activation="linear"
+                init_bits="random",
+                activation="linear",
+                alpha=self.alpha
             )(x)
         else:
             z_mean = layers.Dense(

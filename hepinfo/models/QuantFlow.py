@@ -213,7 +213,7 @@ class TQDense(tf.keras.layers.Layer):
 
     # Total BOPs for the layer
     total_bops = weight_bops + bias_bops + activation_bops
-    return total_bops
+    return self.alpha * total_bops
 
   def compute_bops_std(self):
     weight_bops_std = tf.math.reduce_std(self.weight_bits)

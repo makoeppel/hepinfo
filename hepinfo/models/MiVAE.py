@@ -1,13 +1,24 @@
-import tensorflow as tf
+import six
 import numpy as np
+
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+
+from keras import ops
 from keras.regularizers import L2
+
 from hepinfo.models.qkerasV3 import QDense, QActivation, quantized_sigmoid
 from hepinfo.models.QuantFlow import TQDense, TQActivation
+
 from sklearn.base import BaseEstimator
-#from HGQ.layers import HDense, HQuantize
-import six
+
+from squark.regularizers import MonoL1
+from squark.config import QuantizerConfig
+from squark.layers import QDense as SQDense
+from squark.layers import QLayerBase
+from squark.utils.sugar import FreeEBOPs
+
 
 class BernoulliSampling(tf.keras.layers.Layer):
 
@@ -70,7 +81,7 @@ class MiVAE(BaseEstimator, keras.Model):
     def __init__(self,
         hidden_layers=None,
         activation='relu',
-        use_hgq=False,
+        use_s_quark=False,
         use_qkeras=False,
         use_quantflow=False,
         init_quantized_bits=32,
@@ -87,6 +98,7 @@ class MiVAE(BaseEstimator, keras.Model):
         beta_param=1,
         alpha=0.01,
         gamma=1,
+        beta0=1e-5,
         batch_size=256,
         learning_rate=0.0001,
         learning_rate_decay_rate=1,
@@ -110,6 +122,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
         self.mi_loss_tracker = keras.metrics.Mean(name="mi_loss")
         self.bops_tracker = keras.metrics.Mean(name="bops")
+        self.ebops_tracker = keras.metrics.Mean(name="ebops")
 
         # HP of the model
         self.hidden_layers = hidden_layers
@@ -119,7 +132,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.latent_dims = latent_dims
         self.activation = activation
         self.use_qkeras = use_qkeras
-        self.use_hgq = use_hgq
+        self.use_s_quark = use_s_quark
         self.use_quantflow = use_quantflow
         self.init_quantized_bits = init_quantized_bits
         self.input_quantized_bits = input_quantized_bits
@@ -154,6 +167,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.run_eagerly = run_eagerly
         self.inputshape = None
         self.mi_loss = mi_loss
+        self.beta0 = beta0
 
     def mutual_information_bernoulli_loss(self, y_true, y_pred):
         """
@@ -290,8 +304,24 @@ class MiVAE(BaseEstimator, keras.Model):
             if self.mi_loss:
                 mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-            total_bops = sum(layer.compute_bops() for layer in self.encoder.layers if hasattr(layer, 'compute_bops'))
-            total_bops_std = [layer.compute_bops_std() for layer in self.encoder.layers if hasattr(layer, 'compute_bops_std')]
+            total_bops = 0
+            total_bops_std = []
+            if self.use_quantflow:
+                for layer in self.encoder.layers:
+                    if hasattr(layer, 'compute_bops'):
+                        total_bops += layer.compute_bops()
+                    if hasattr(layer, 'compute_bops_std'):
+                        total_bops_std.append(layer.compute_bops_std())
+                if type(self.alpha) != str: total_bops *= self.alpha
+
+            ebops = 0
+            if self.use_s_quark:
+                for layer in self.encoder.layers:
+                    if isinstance(layer, QLayerBase) and layer.enable_ebops:
+                        if tf.get_static_value(layer._ebops) is None:
+                            ebops += 0
+                        else:
+                            ebops += int(tf.get_static_value(layer._ebops))
 
             total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops# - 0.001 * tf.reduce_mean(total_bops_std)
 
@@ -303,6 +333,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.kl_loss_tracker.update_state(kl_loss)
         self.mi_loss_tracker.update_state(mi_loss)
         self.bops_tracker.update_state(total_bops)
+        self.ebops_tracker.update_state(ebops)
 
         return {
             "loss": self.total_loss_tracker.result(),
@@ -310,6 +341,7 @@ class MiVAE(BaseEstimator, keras.Model):
             "kl_loss": self.kl_loss_tracker.result(),
             "mi_loss": self.mi_loss_tracker.result(),
             "bops": self.bops_tracker.result(),
+            "ebops": self.ebops_tracker.result(),
         }
 
     def test_step(self, data):
@@ -331,12 +363,20 @@ class MiVAE(BaseEstimator, keras.Model):
             mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
         total_bops = 0
-        for layer in self.encoder.layers:
-            if isinstance(layer, TQDense):
-                total_bops += layer.compute_bops()
-            if isinstance(layer, TQActivation):
-                total_bops += layer.compute_bops()
-        total_bops *= self.alpha
+        if self.use_quantflow:
+            for layer in self.encoder.layers:
+                if hasattr(layer, 'compute_bops'):
+                    total_bops += layer.compute_bops()
+            if type(self.alpha) != str: total_bops *= self.alpha
+
+        ebops = 0
+        if self.use_s_quark:
+            for layer in self.endocer._flatten_layers():
+                if isinstance(layer, QLayerBase) and layer.enable_ebops:
+                    if tf.get_static_value(layer._ebops) is None:
+                        ebops += 0
+                    else:
+                        ebops += int(tf.get_static_value(layer._ebops))
 
         total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops
 
@@ -345,6 +385,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.kl_loss_tracker.update_state(kl_loss)
         self.mi_loss_tracker.update_state(mi_loss)
         self.bops_tracker.update_state(total_bops)
+        self.ebops_tracker.update_state(ebops)
 
         return {
             "loss": self.total_loss_tracker.result(),
@@ -352,6 +393,7 @@ class MiVAE(BaseEstimator, keras.Model):
             "kl_loss": self.kl_loss_tracker.result(),
             "mi_loss": self.mi_loss_tracker.result(),
             "bops": self.bops_tracker.result(),
+            "ebops": self.ebops_tracker.result(),
         }
 
     def call(self, x, training=True):
@@ -368,10 +410,14 @@ class MiVAE(BaseEstimator, keras.Model):
 
         if self.use_qkeras: x = QActivation(self.input_quantized_bits)(encoder_inputs)
         if self.use_quantflow: x = TQActivation(self.inputshape, bits="random", alpha=self.alpha)(encoder_inputs)
-        if self.use_hgq: x = HQuantize(beta=3e-5)(encoder_inputs)
-        if not self.use_qkeras and not self.use_quantflow: x = encoder_inputs
+        if self.use_s_quark: 
+            x = encoder_inputs
+            iq_conf = QuantizerConfig(place='datalane', k0=1)
+            oq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1e-3))
 
-        for layer in self.hidden_layers:
+        if not self.use_qkeras and not self.use_quantflow and not self.use_s_quark: x = encoder_inputs
+
+        for i, layer in enumerate(self.hidden_layers):
             if self.use_qkeras:
                 x = QDense(
                     layer,
@@ -387,8 +433,13 @@ class MiVAE(BaseEstimator, keras.Model):
                     activation="relu",
                     alpha=self.alpha
                 )(x)
-            elif self.use_hgq:
-                x = HDense(layer, activation="relu", beta=3e-5)(x)
+            elif self.use_s_quark:
+                if i == 0:
+                    x = SQDense(layer, activation="relu", iq_conf=iq_conf, beta0=self.beta0, name="input")(x)
+                elif i == len(self.hidden_layers) - 1:
+                    x = SQDense(layer, activation="relu", oq_conf=oq_conf, enable_oq=False, beta0=self.beta0, name="output")(x)
+                else:
+                    x = SQDense(layer, activation="relu", beta0=self.beta0)(x)
             else:
                 x = layers.Dense(
                     layer,
@@ -415,9 +466,9 @@ class MiVAE(BaseEstimator, keras.Model):
                 kernel_quantizer=self.quantized_bits,
                 bias_quantizer=self.quantized_bits,
             )(x)
-        elif self.use_hgq:
-            z_mean = HDense(self.latent_dims, beta=3e-5)(x)
-            z_log_var = HDense(self.latent_dims, beta=3e-5)(x)
+        elif self.use_s_quark:
+            z_mean = SQDense(self.latent_dims, activation="linear", beta0=self.beta0)(x)
+            z_log_var = SQDense(self.latent_dims, activation="linear", beta0=self.beta0)(x)
         elif self.use_quantflow:
             z_mean = TQDense(
                 self.latent_dims,
@@ -536,14 +587,20 @@ class MiVAE(BaseEstimator, keras.Model):
 
         self.compile(
             optimizer=self.optimizer(lr_schedule),
-            run_eagerly=self.run_eagerly
+            run_eagerly=self.run_eagerly,
         )
 
-        callback = keras.callbacks.EarlyStopping(
+        callback = [keras.callbacks.EarlyStopping(
             monitor=self.monitor,
             mode='min',
             patience=self.patience
-        )
+        )]
+
+        if self.use_s_quark:
+            nan_terminate = keras.callbacks.TerminateOnNaN()
+            ebops = FreeEBOPs()
+            callback.append(nan_terminate)
+            callback.append(ebops)
 
         history = super().fit(
             x,
@@ -551,7 +608,7 @@ class MiVAE(BaseEstimator, keras.Model):
             epochs=self.epoch,
             batch_size=self.batch_size,
             verbose=self.verbose,
-            callbacks=[callback]
+            callbacks=callback
         )
         return history
 

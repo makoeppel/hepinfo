@@ -834,7 +834,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
 
     # quantized_bits with "1" bit becomes a binary implementation.
     xq = tf.cond(
-        unsigned_bits > 0,  # Condition
+        tf.cast(unsigned_bits > 0, tf.bool),  # Condition
         lambda: handle_unsigned_bits(x, m, m_i, unsigned_bits),  # True case
         lambda: handle_binary_quantization(x, self.keep_negative),  # False case
     )

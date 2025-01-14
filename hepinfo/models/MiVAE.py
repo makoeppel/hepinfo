@@ -409,7 +409,7 @@ class MiVAE(BaseEstimator, keras.Model):
         encoder_inputs = keras.Input(shape=self.inputshape)
 
         if self.use_qkeras: x = QActivation(self.input_quantized_bits)(encoder_inputs)
-        if self.use_quantflow: x = TQActivation(self.inputshape, bits="random", alpha=self.alpha)(encoder_inputs)
+        if self.use_quantflow: x = TQActivation(self.inputshape, bits=self.init_quantized_bits, alpha=self.alpha)(encoder_inputs)
         if self.use_s_quark: 
             x = encoder_inputs
             iq_conf = QuantizerConfig(place='datalane', k0=1)
@@ -429,17 +429,17 @@ class MiVAE(BaseEstimator, keras.Model):
             elif self.use_quantflow:
                 x = TQDense(
                     layer,
-                    init_bits="random",
-                    activation="relu",
+                    init_bits=self.init_quantized_bits,
+                    activation=self.activation,
                     alpha=self.alpha
                 )(x)
             elif self.use_s_quark:
                 if i == 0:
-                    x = SQDense(layer, activation="relu", iq_conf=iq_conf, beta0=self.beta0, name="input")(x)
+                    x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0, name="input")(x)
                 elif i == len(self.hidden_layers) - 1:
-                    x = SQDense(layer, activation="relu", oq_conf=oq_conf, enable_oq=False, beta0=self.beta0, name="output")(x)
+                    x = SQDense(layer, activation=self.activation, oq_conf=oq_conf, enable_oq=False, beta0=self.beta0, name="output")(x)
                 else:
-                    x = SQDense(layer, activation="relu", beta0=self.beta0)(x)
+                    x = SQDense(layer, activation=self.activation, beta0=self.beta0)(x)
             else:
                 x = layers.Dense(
                     layer,
@@ -473,14 +473,14 @@ class MiVAE(BaseEstimator, keras.Model):
             z_mean = TQDense(
                 self.latent_dims,
                 name="z_mean",
-                init_bits="random",
+                init_bits=self.init_quantized_bits,
                 activation="linear",
                 alpha=self.alpha
             )(x)
             z_log_var = TQDense(
                 self.latent_dims,
                 name="z_log_var",
-                init_bits="random",
+                init_bits=self.init_quantized_bits,
                 activation="linear",
                 alpha=self.alpha
             )(x)

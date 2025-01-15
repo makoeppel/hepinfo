@@ -1,0 +1,3 @@
+[submodule "s-quark-dev"]
+	path = s-quark-dev
+	url = git@github.com:calad0i/s-quark-dev.git

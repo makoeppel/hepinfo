@@ -11,7 +11,12 @@ import tensorflow as tf
 
 #from nptyping import NDArray
 from sklearn.base import BaseEstimator
-from hepinfo.models.qkerasV3 import QActivation
+from hepinfo.models.qkerasV3 import QDense, QActivation, quantized_sigmoid
+from hepinfo.models.QuantFlow import TQDense, TQActivation
+
+from squark.regularizers import MonoL1
+from squark.config import QuantizerConfig
+from squark.layers import QDense as SQDense
 
 
 class BaseModel(BaseEstimator):
@@ -30,6 +35,15 @@ class BaseModel(BaseEstimator):
             activation_nonbinary: str = 'sigmoid',
             acitvation_last_layer: str = 'sigmoid',
             kernel_regularizer: float = 0.0,
+            use_s_quark: bool = False,
+            use_qkeras: bool = False,
+            use_quantflow: bool = False,
+            init_quantized_bits=32,
+            input_quantized_bits="quantized_bits(16, 6, 0)",
+            quantized_bits="quantized_bits(16, 6, 0, use_stochastic_rounding=True)",
+            quantized_activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)",
+            alpha=1,
+            beta0=1,
             drop_out: float = 0,
             # Common HPs
             batch_size: int = 200,
@@ -63,6 +77,15 @@ class BaseModel(BaseEstimator):
         self.activation_nonbinary = activation_nonbinary
         self.acitvation_last_layer = acitvation_last_layer
         self.kernel_regularizer = kernel_regularizer
+        self.init_quantized_bits = init_quantized_bits
+        self.input_quantized_bits = input_quantized_bits
+        self.quantized_bits = quantized_bits
+        self.quantized_activation = quantized_activation
+        self.alpha = alpha
+        self.beta0 = beta0
+        self.use_qkeras = use_qkeras
+        self.use_s_quark = use_s_quark
+        self.use_quantflow = use_quantflow
         self.drop_out = drop_out
         self.batch_size = batch_size
         if loss == 'binary_crossentropy':
@@ -171,13 +194,38 @@ class BaseModel(BaseEstimator):
                 Any: output_layer
         """
 
-        out = tf.keras.layers.Dense(
-            units=num_relevance_classes,
-            activation=feature_activation,
-            kernel_regularizer=kernel_regularizer,
-            activity_regularizer=kernel_regularizer,
-            name=f"{name}_{index}"
-        )(input_layer)
+        if self.use_qkeras:
+            out = QDense(
+                num_relevance_classes,
+                kernel_initializer="glorot_uniform",
+                kernel_quantizer=self.quantized_bits,
+                bias_quantizer=self.quantized_bits,
+                activation=feature_activation,
+                name=f"{name}_{index}"
+            )(input_layer)
+        elif self.use_quantflow:
+            out = TQDense(
+                num_relevance_classes,
+                init_bits=self.init_quantized_bits,
+                activation=feature_activation,
+                alpha=self.alpha,
+                name=f"{name}_{index}"
+            )(input_layer)
+        elif self.use_s_quark:
+            out = SQDense(
+                num_relevance_classes,
+                activation=feature_activation,
+                beta0=self.beta0,
+                name=f"{name}_{index}"
+            )(input_layer)
+        else:
+            out = tf.keras.layers.Dense(
+                units=num_relevance_classes,
+                activation=feature_activation,
+                kernel_regularizer=kernel_regularizer,
+                activity_regularizer=kernel_regularizer,
+                name=f"{name}_{index}"
+            )(input_layer)
 
         return out
 
@@ -211,15 +259,23 @@ class BaseModel(BaseEstimator):
         # get the activation functions for the binary part
         activation_binary = self._get_quantized_activation(self.activation_binary)
 
-        hidden_layers = input_layer
+        if self.use_qkeras: hidden_layers = QActivation(self.input_quantized_bits)(input_layer)
+        if self.use_quantflow: hidden_layers = TQActivation(self.input_shape, bits=self.init_quantized_bits, alpha=self.alpha)(input_layer)
+        if self.use_s_quark:
+            hidden_layers = input_layer
+            iq_conf = QuantizerConfig(place='datalane', k0=1)
+            oq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1e-3))
+
+        if not self.use_qkeras and not self.use_quantflow and not self.use_s_quark: hidden_layers = input_layer
+
         last_quantized = None
         # loop over the number of hidden layers for the whole network
-        for i in range(len(hidden_layer)):
+        for i, layer in enumerate(self.hidden_layers):
             if self.batch_normalisation and i != 0:
                 hidden_layers = tf.keras.layers.BatchNormalization()(hidden_layers)
             if conv:
                 hidden_layers = tf.keras.layers.Conv2D(
-                    filters=hidden_layer[i],
+                    filters=layer,
                     kernel_size=kernel_size,
                     activation=self.activation_nonbinary,
                     kernel_regularizer=kernel_regularizer,
@@ -227,13 +283,38 @@ class BaseModel(BaseEstimator):
                     name=f"{name}_{i}"
                 )(hidden_layers)
             else:
-                hidden_layers = tf.keras.layers.Dense(
-                    units=hidden_layer[i],
-                    activation=self.activation_nonbinary,
-                    kernel_regularizer=kernel_regularizer,
-                    activity_regularizer=kernel_regularizer,
-                    name=f"{name}_{i}"
-                )(hidden_layers)
+                if self.use_qkeras:
+                    hidden_layers = QDense(
+                        layer,
+                        kernel_initializer="glorot_uniform",
+                        kernel_quantizer=self.quantized_bits,
+                        bias_quantizer=self.quantized_bits,
+                        activation=self.quantized_activation,
+                        name=f"{name}_{i}"
+                        )(hidden_layers)
+                elif self.use_quantflow:
+                    hidden_layers = TQDense(
+                        layer,
+                        init_bits=self.init_quantized_bits,
+                        activation=self.activation_nonbinary,
+                        alpha=self.alpha,
+                        name=f"{name}_{i}"
+                    )(hidden_layers)
+                elif self.use_s_quark:
+                    if i == 0:
+                        hidden_layers = SQDense(layer, activation=self.activation_nonbinary, iq_conf=iq_conf, beta0=self.beta0, name=f"{name}_{i}")(hidden_layers)
+                    elif i == len(self.hidden_layers) - 1:
+                        hidden_layers = SQDense(layer, activation=self.activation_nonbinary, oq_conf=oq_conf, enable_oq=False, beta0=self.beta0, name=f"{name}_{i}")(hidden_layers)
+                    else:
+                        hidden_layers = SQDense(layer, activation=self.activation_nonbinary, beta0=self.beta0, name=f"{name}_{i}")(hidden_layers)
+                else:
+                    hidden_layers = tf.keras.layers.Dense(
+                        units=layer,
+                        activation=self.activation_nonbinary,
+                        kernel_regularizer=kernel_regularizer,
+                        activity_regularizer=kernel_regularizer,
+                        name=f"{name}_{i}"
+                    )(hidden_layers)
             if self.quantized_position[i]:
                 last_quantized = hidden_layers
                 hidden_layers = QActivation(

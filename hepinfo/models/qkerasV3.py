@@ -2,10 +2,14 @@
 
 import warnings, logging, six
 
+from tensorflow.keras import activations
+from tensorflow.keras import constraints
+from tensorflow.keras import initializers
+from tensorflow.keras import regularizers
+
 import tensorflow as tf
 import tensorflow.keras.backend as K
-from keras.src import backend
-from keras.src.utils import tracking
+
 import numpy as np
 
 from tensorflow.python.framework import smart_cond as tf_utils

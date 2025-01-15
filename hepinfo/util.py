@@ -1,6 +1,9 @@
-import h5py
+import h5py, six
 import numpy as np
 import awkward as ak
+import tensorflow as tf
+from tensorflow.keras import backend as K
+from tensorflow.keras.saving import register_keras_serializable
 
 
 def readFromAnomalyh5(inputfile, process, object_ranges='default1', moreInfo=None, verbosity=0):
@@ -153,3 +156,106 @@ def awkward_to_numpy(ak_array, maxN, verbosity = 0):
     selected_arr = ak.fill_none( ak.pad_none( ak_array, maxN, clip=True, axis=-1), {"pt":0, "eta":0, "phi":0})
     np_arr = np.stack( (selected_arr.pt.to_numpy(), selected_arr.eta.to_numpy(), selected_arr.phi.to_numpy()), axis=2)
     return np_arr.reshape(np_arr.shape[0], np_arr.shape[1] * np_arr.shape[2])
+
+@register_keras_serializable(package="Custom", name="mutual_information_bernoulli_loss")
+def mutual_information_bernoulli_loss(y_true, y_pred):
+    """
+    I(x;y)  = H(x)   - H(x|y)
+            = H(L_n) - H(L_n|s)
+            = H(L_n) - (H(L_n|s=0) + H(L_n|s=1))
+    H_bernoulli(x) = -(1-theta) x ln(1-theta) - theta x ln(theta)
+    here theta => probability for 1 and 1-theta => probability for 0
+
+    pseudocode:
+    def get_h_bernoulli(l):
+        theta = np.mean(l, axis=0)
+        return -(1-theta) * np.log2(1-theta) - theta * np.log2(theta)
+
+    y_pred = np.random.binomial(n=1, p=0.6, size=[2000, 5])
+    y_true = np.random.binomial(n=1, p=0.6, size=[2000])
+
+    y_pred[y_true == 0] = np.random.binomial(n=1, p=0.5, size=[len(y_true[y_true == 0]), 5])
+    y_pred[y_true == 1] = np.random.binomial(n=1, p=0.8, size=[len(y_true[y_true == 1]), 5])
+
+    H_L_n = get_h_bernoulli(y_pred)
+    H_L_n_s0 = get_h_bernoulli(y_pred[y_true == 0])
+    H_L_n_s1 = get_h_bernoulli(y_pred[y_true == 1])
+
+    counts = np.bincount(y_true)
+
+    MI = H_L_n - ((counts[0] / 2000 * H_L_n_s0) + (counts[1] / 2000 * H_L_n_s1))
+
+    return np.sum(MI)
+
+    :param y_pred: output of the layer
+    :param y_true: sensitive attribute
+    :return: The loss
+    """
+
+    def get_theta(x):
+        alpha = None
+        temperature = 6.0
+        use_real_sigmoid = True
+        # hard_sigmoid
+        _sigmoid = tf.keras.backend.clip(0.5 * x + 0.5, 0.0, 1.0)
+        if isinstance(alpha, six.string_types):
+            assert self.alpha in ["auto", "auto_po2"]
+
+        if isinstance(alpha, six.string_types):
+            len_axis = len(x.shape)
+
+            if len_axis > 1:
+                if K.image_data_format() == "channels_last":
+                    axis = list(range(len_axis - 1))
+                else:
+                    axis = list(range(1, len_axis))
+            else:
+                axis = [0]
+
+            std = K.std(x, axis=axis, keepdims=True) + K.epsilon()
+        else:
+            std = 1.0
+
+        if use_real_sigmoid:
+            p = tf.keras.backend.sigmoid(temperature * x / std)
+        else:
+            p = _sigmoid(temperature * x / std)
+
+        return p
+
+    def log2(x):
+        numerator = tf.math.log(x + 1e-20)
+        denominator = tf.math.log(tf.constant(2, dtype=numerator.dtype))
+        return numerator / denominator
+
+    def get_h_bernoulli(tensor):
+        theta = tf.reduce_mean(get_theta(tensor), axis=0)
+        return tf.reduce_sum(-(1 - theta) * log2(1 - theta) - theta * log2(theta))
+
+    y_true = tf.cast(y_true, tf.int32)
+    y_pred = tf.cast(y_pred, tf.float64)
+    num_classes = 2
+    H_L_n = get_h_bernoulli(y_pred)
+    H_L_n_s = []
+    norm_s = []
+    for i in range(num_classes):
+        if tf.shape(y_true).shape[0] == 1:
+            y_filter = tf.where(y_true == i)
+        else:
+            y_filter = tf.where(y_true[:, 0] == i)[:, 0]
+
+        y_i = tf.gather(y_pred, indices=y_filter)
+        H_L_n_si = get_h_bernoulli(y_i)
+        H_L_n_s.append(H_L_n_si)
+        cnt_i = tf.shape(y_i)[0] + tf.cast(1e-16, dtype=tf.int32)  # number of repr with index i
+        norm_si = cnt_i / tf.shape(y_pred)[0]
+        norm_s.append(norm_si)
+
+    norm_s = tf.convert_to_tensor(norm_s)
+
+    H_L_n_s = tf.convert_to_tensor(H_L_n_s)
+    MI = H_L_n - tf.reduce_sum(tf.math.multiply(norm_s, H_L_n_s))
+
+    # NOTE: this is a hotfix when we dont have all classes
+    MI = tf.where(tf.math.is_nan(MI), tf.convert_to_tensor([0.0], dtype=tf.float64), MI)
+    return MI

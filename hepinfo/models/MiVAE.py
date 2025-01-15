@@ -9,14 +9,13 @@ from keras import ops
 from keras.regularizers import L2
 
 from hepinfo.models.qkerasV3 import QDense, QActivation, quantized_sigmoid
-from hepinfo.models.QuantFlow import TQDense, TQActivation
+from hepinfo.models.QuantFlow import TQDense, TQActivation, FreeBOPs
 
 from sklearn.base import BaseEstimator
 
 from squark.regularizers import MonoL1
 from squark.config import QuantizerConfig
 from squark.layers import QDense as SQDense
-from squark.layers import QLayerBase
 from squark.utils.sugar import FreeEBOPs
 
 
@@ -121,8 +120,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.reconstruction_loss_tracker = keras.metrics.Mean(name="reconstruction_loss")
         self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
         self.mi_loss_tracker = keras.metrics.Mean(name="mi_loss")
-        self.bops_tracker = keras.metrics.Mean(name="bops")
-        self.ebops_tracker = keras.metrics.Mean(name="ebops")
+        self.bops_loss_tracker = keras.metrics.Mean(name="bops")
 
         # HP of the model
         self.hidden_layers = hidden_layers
@@ -314,16 +312,7 @@ class MiVAE(BaseEstimator, keras.Model):
                         total_bops_std.append(layer.compute_bops_std())
                 if type(self.alpha) != str: total_bops *= self.alpha
 
-            ebops = 0
-            if self.use_s_quark:
-                for layer in self.encoder.layers:
-                    if isinstance(layer, QLayerBase) and layer.enable_ebops:
-                        if tf.get_static_value(layer._ebops) is None:
-                            ebops += 0
-                        else:
-                            ebops += int(tf.get_static_value(layer._ebops))
-
-            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops# - 0.001 * tf.reduce_mean(total_bops_std)
+            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -332,16 +321,14 @@ class MiVAE(BaseEstimator, keras.Model):
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
         self.kl_loss_tracker.update_state(kl_loss)
         self.mi_loss_tracker.update_state(mi_loss)
-        self.bops_tracker.update_state(total_bops)
-        self.ebops_tracker.update_state(ebops)
+        self.bops_loss_tracker.update_state(total_bops)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss": self.kl_loss_tracker.result(),
             "mi_loss": self.mi_loss_tracker.result(),
-            "bops": self.bops_tracker.result(),
-            "ebops": self.ebops_tracker.result(),
+            "bops": self.bops_loss_tracker.result(),
         }
 
     def test_step(self, data):
@@ -362,38 +349,18 @@ class MiVAE(BaseEstimator, keras.Model):
         if self.mi_loss:
             mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-        total_bops = 0
-        if self.use_quantflow:
-            for layer in self.encoder.layers:
-                if hasattr(layer, 'compute_bops'):
-                    total_bops += layer.compute_bops()
-            if type(self.alpha) != str: total_bops *= self.alpha
-
-        ebops = 0
-        if self.use_s_quark:
-            for layer in self.endocer._flatten_layers():
-                if isinstance(layer, QLayerBase) and layer.enable_ebops:
-                    if tf.get_static_value(layer._ebops) is None:
-                        ebops += 0
-                    else:
-                        ebops += int(tf.get_static_value(layer._ebops))
-
-        total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops
+        total_loss = reconstruction_loss + kl_loss + mi_loss
 
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
         self.kl_loss_tracker.update_state(kl_loss)
         self.mi_loss_tracker.update_state(mi_loss)
-        self.bops_tracker.update_state(total_bops)
-        self.ebops_tracker.update_state(ebops)
 
         return {
             "loss": self.total_loss_tracker.result(),
             "reconstruction_loss": self.reconstruction_loss_tracker.result(),
             "kl_loss": self.kl_loss_tracker.result(),
             "mi_loss": self.mi_loss_tracker.result(),
-            "bops": self.bops_tracker.result(),
-            "ebops": self.ebops_tracker.result(),
         }
 
     def call(self, x, training=True):

@@ -1,6 +1,19 @@
 import random
 import tensorflow as tf
 
+from keras.api import Model
+from keras.api.callbacks import Callback
+
+
+class FreeBOPs(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        assert logs is not None
+        assert isinstance(self.model, Model)
+        bops = 0
+        for layer in self.model.layers:
+            if hasattr(layer, 'compute_bops'):
+                bops += layer.compute_bops()
+        logs['bops'] = bops
 
 def round(x, round_type):
     if round_type == 0:  # standard round
@@ -87,6 +100,8 @@ class TQActivation(tf.keras.layers.Layer):
         # Quantize the activations using the current bit width
         inputs = tf.clip_by_value(inputs, self.clip_min, self.clip_max)
         quantized_output = quantize(inputs, self.activation_bits, self.round_type)
+
+        self.add_loss(self.alpha * self.compute_bops())
         return quantized_output
 
     def compute_output_shape(self, input_shape):
@@ -109,7 +124,7 @@ class TQActivation(tf.keras.layers.Layer):
 
         # Total BOPs for the layer
         total_bops = activation_bops
-        return self.alpha * total_bops
+        return total_bops
 
     def compute_bops_std(self):
         activation_bops_std = tf.math.reduce_std(self.activation_bits)
@@ -213,7 +228,7 @@ class TQDense(tf.keras.layers.Layer):
 
     # Total BOPs for the layer
     total_bops = weight_bops + bias_bops + activation_bops
-    return self.alpha * total_bops
+    return total_bops
 
   def compute_bops_std(self):
     weight_bops_std = tf.math.reduce_std(self.weight_bits)
@@ -245,6 +260,8 @@ class TQDense(tf.keras.layers.Layer):
 
       if self.activation == "linear":
         output = quantize(output, unsigned_activation_bits, self.round_type)
+
+      self.add_loss(self.alpha * self.compute_bops())
 
       return tf.convert_to_tensor(output)
 

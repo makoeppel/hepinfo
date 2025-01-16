@@ -1,7 +1,7 @@
 import gc
 
+import keras
 import numpy as np
-import tensorflow as tf
 
 from hepinfo.models.BaseModel import *
 from hepinfo.models.GradReverse import GradReverse
@@ -81,9 +81,9 @@ class DebiasClassifier(BaseModel):
         """
 
         # Placeholders for the inputs
-        self.x0 = tf.keras.layers.Input(shape=self.num_features, name='x0')
+        self.x0 = keras.layers.Input(shape=self.num_features, name='x0')
 
-        input_layer = tf.keras.layers.Input(shape=self.num_features, name='input')
+        input_layer = keras.layers.Input(shape=self.num_features, name='input')
 
         self.feature_part = self._get_hidden_layer(
             input_layer=input_layer,
@@ -125,13 +125,13 @@ class DebiasClassifier(BaseModel):
             name='cls_part',
         )
 
-        self.model = tf.keras.models.Model(inputs=self.x0, outputs=[out, nn_bias_0], name=self.name)
+        self.model = keras.models.Model(inputs=self.x0, outputs=[out, nn_bias_0], name=self.name)
 
         if self.print_summary:
             self.model.summary()
             self._plot_model(self.model, 'model.png')
 
-        lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+        lr_schedule = keras.optimizers.schedules.InverseTimeDecay(
             self.learning_rate,
             decay_steps=self.learning_rate_decay_steps,
             decay_rate=self.learning_rate_decay_rate,

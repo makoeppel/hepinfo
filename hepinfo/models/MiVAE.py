@@ -1,20 +1,19 @@
+import keras
 import numpy as np
 import tensorflow as tf
-from keras.api import ops
+from keras.api import layers, ops
 from keras.api.regularizers import L2
 from sklearn.base import BaseEstimator
 from squark.config import QuantizerConfig, QuantizerConfigScope
 from squark.layers import QDense as SQDense
 from squark.regularizers import MonoL1
 from squark.utils.sugar import FreeEBOPs
-from tensorflow import keras
-from tensorflow.keras import layers
 
 from hepinfo.models.qkerasV3 import QActivation, QDense, quantized_sigmoid
 from hepinfo.models.QuantFlow import TQActivation, TQDense
 
 
-class BernoulliSampling(tf.keras.layers.Layer):
+class BernoulliSampling(keras.layers.Layer):
     def __init__(self, num_samples, name=None, std=1, temperature=6.0, use_quantized=False, bits_bernoulli_sigmoid=8, **kwargs):
         super().__init__(name=name, **kwargs)
         self.num_samples = num_samples
@@ -31,7 +30,7 @@ class BernoulliSampling(tf.keras.layers.Layer):
             )
             p = tf.cast(p, tf.float64)
         else:
-            p = tf.keras.backend.sigmoid(self.temperature * inputs / self.std)
+            p = keras.backend.sigmoid(self.temperature * inputs / self.std)
 
         # sample num_samples times from a bernoulli
         out = tf.zeros(tf.shape(inputs))
@@ -48,7 +47,7 @@ class BernoulliSampling(tf.keras.layers.Layer):
         return out
 
 
-# @tf.keras.utils.register_keras_serializable()
+# @keras.utils.register_keras_serializable()
 class Sampling(layers.Layer):
     """Uses (z_mean, z_log_var) to sample z, the vector encoding a digit."""
 
@@ -62,7 +61,7 @@ class Sampling(layers.Layer):
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
 
 
-# @tf.keras.utils.register_keras_serializable()
+# @keras.utils.register_keras_serializable()
 class MiVAE(BaseEstimator, keras.Model):
     """
     Stochastically Quantized Variational Auto Endcoder which has a bernoulli
@@ -145,9 +144,9 @@ class MiVAE(BaseEstimator, keras.Model):
         self.learning_rate_decay_steps = learning_rate_decay_steps
         self.optimizer = optimizer
         if optimizer == 'Adam':
-            self.optimizer = tf.keras.optimizers.Adam
+            self.optimizer = keras.optimizers.Adam
         if optimizer == 'SGD':
-            self.optimizer = tf.keras.optimizers.SGD
+            self.optimizer = keras.optimizers.SGD
         if optimizer == 'Nadam':
             raise NotImplementedError
         self.optimizer_name = optimizer
@@ -209,20 +208,19 @@ class MiVAE(BaseEstimator, keras.Model):
                     len_axis = len(x.shape)
 
                     if len_axis > 1:
-                        # if ops.image_data_format() == 'channels_last':
-                        if True:
+                        if keras.backend.image_data_format() == 'channels_last':
                             axis = list(range(len_axis - 1))
                         else:
                             axis = list(range(1, len_axis))
                     else:
                         axis = [0]
 
-                    std = ops.std(x, axis=axis, keepdims=True) + ops.epsilon()
+                    std = ops.std(x, axis=axis, keepdims=True) + keras.backend.epsilon()
                 else:
                     std = 1.0
 
                 if use_real_sigmoid:
-                    p = tf.keras.backend.sigmoid(temperature * x / std)
+                    p = ops.sigmoid(temperature * x / std)
                 else:
                     p = tf.cast(_sigmoid(temperature * x / std), tf.float64)
 
@@ -522,7 +520,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.encoder = self.get_encoder()
         self.decoder = self.get_decoder()
 
-        lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+        lr_schedule = keras.optimizers.schedules.InverseTimeDecay(
             self.learning_rate,
             decay_steps=self.learning_rate_decay_steps,
             decay_rate=self.learning_rate_decay_rate,
@@ -531,11 +529,11 @@ class MiVAE(BaseEstimator, keras.Model):
 
         if type(self.optimizer) is str:
             if self.optimizer == 'Adam':
-                self.optimizer = tf.keras.optimizers.Adam
+                self.optimizer = keras.optimizers.Adam
             if self.optimizer == 'SGD':
-                self.optimizer = tf.keras.optimizers.SGD
+                self.optimizer = keras.optimizers.SGD
             if self.optimizer == 'Nadam':
-                self.optimizer = tf.keras.optimizers.Nadam
+                self.optimizer = keras.optimizers.Nadam
 
         self.compile(
             optimizer=self.optimizer(lr_schedule),
@@ -575,7 +573,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
-        reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
+        reconstruction_loss = keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_sum(kl_loss, axis=1)
         total_loss = reconstruction_loss + kl_loss

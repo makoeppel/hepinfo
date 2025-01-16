@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import keras
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 
 # from nptyping import NDArray
 from sklearn.base import BaseEstimator
@@ -90,18 +90,18 @@ class BaseModel(BaseEstimator):
         self.drop_out = drop_out
         self.batch_size = batch_size
         if loss == 'binary_crossentropy':
-            self.loss = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+            self.loss = keras.losses.BinaryCrossentropy(from_logits=False)
         elif loss == 'sparse_categorical_crossentropy':
-            self.loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
+            self.loss = keras.losses.SparseCategoricalCrossentropy(from_logits=False)
         else:
             self.loss = loss
         self.learning_rate = learning_rate
         self.learning_rate_decay_rate = learning_rate_decay_rate
         self.learning_rate_decay_steps = learning_rate_decay_steps
         if optimizer == 'Adam':
-            self.optimizer = tf.keras.optimizers.Adam
+            self.optimizer = keras.optimizers.Adam
         if optimizer == 'SGD':
-            self.optimizer = tf.keras.optimizers.SGD
+            self.optimizer = keras.optimizers.SGD
         if optimizer == 'Nadam':
             raise NotImplementedError
         self.quantized_position = quantized_position
@@ -127,7 +127,7 @@ class BaseModel(BaseEstimator):
     def _plot_model(self, model: Any, output_name: str) -> None:
         """
         Plot the model and save it to png file using
-        tf.keras.utils.plot_model
+        keras.utils.plot_model
 
         Args:
             Any: model
@@ -137,7 +137,7 @@ class BaseModel(BaseEstimator):
             None
         """
 
-        tf.keras.utils.plot_model(
+        keras.utils.plot_model(
             model,
             to_file=output_name,
             show_shapes=False,
@@ -217,7 +217,7 @@ class BaseModel(BaseEstimator):
                 input_layer
             )
         else:
-            out = tf.keras.layers.Dense(
+            out = keras.layers.Dense(
                 units=num_relevance_classes,
                 activation=feature_activation,
                 kernel_regularizer=kernel_regularizer,
@@ -273,9 +273,9 @@ class BaseModel(BaseEstimator):
         # loop over the number of hidden layers for the whole network
         for i, layer in enumerate(self.hidden_layers):
             if self.batch_normalisation and i != 0:
-                hidden_layers = tf.keras.layers.BatchNormalization()(hidden_layers)
+                hidden_layers = keras.layers.BatchNormalization()(hidden_layers)
             if conv:
-                hidden_layers = tf.keras.layers.Conv2D(
+                hidden_layers = keras.layers.Conv2D(
                     filters=layer,
                     kernel_size=kernel_size,
                     activation=self.activation_nonbinary,
@@ -320,7 +320,7 @@ class BaseModel(BaseEstimator):
                             layer, activation=self.activation_nonbinary, beta0=self.beta0, name=f'{name}_{i}'
                         )(hidden_layers)
                 else:
-                    hidden_layers = tf.keras.layers.Dense(
+                    hidden_layers = keras.layers.Dense(
                         units=layer,
                         activation=self.activation_nonbinary,
                         kernel_regularizer=kernel_regularizer,
@@ -333,21 +333,21 @@ class BaseModel(BaseEstimator):
                     hidden_layers
                 )
             if drop_out > 0:
-                hidden_layers = tf.keras.layers.Dropout(drop_out)(hidden_layers)
+                hidden_layers = keras.layers.Dropout(drop_out)(hidden_layers)
 
         # flatten if net is convolutional
         if conv:
-            hidden_layers = tf.keras.layers.Flatten()(hidden_layers)
+            hidden_layers = keras.layers.Flatten()(hidden_layers)
 
         if self.batch_normalisation:
-            hidden_layers = tf.keras.layers.BatchNormalization()(hidden_layers)
+            hidden_layers = keras.layers.BatchNormalization()(hidden_layers)
 
         # create classification part
         output_layer = self._get_cls_part(
             input_layer=hidden_layers,
             num_relevance_classes=self.last_layer_size,
             feature_activation=self.acitvation_last_layer,
-            kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
+            kernel_regularizer=keras.regularizers.l2(self.kernel_regularizer),
             name=name,
             index=len(hidden_layer),
         )
@@ -373,46 +373,46 @@ class BaseModel(BaseEstimator):
         nn = input_layer
         for i in range(len(hidden_layer)):
             if not conv:
-                nn = tf.keras.layers.Dense(
+                nn = keras.layers.Dense(
                     units=hidden_layer[i],
                     activation=feature_activation,
-                    kernel_regularizer=tf.keras.regularizers.l2(reg),
-                    bias_regularizer=tf.keras.regularizers.l2(reg),
-                    activity_regularizer=tf.keras.regularizers.l2(reg),
+                    kernel_regularizer=keras.regularizers.l2(reg),
+                    bias_regularizer=keras.regularizers.l2(reg),
+                    activity_regularizer=keras.regularizers.l2(reg),
                     name=f'nn_{name}_{i}',
                 )(nn)
             else:
-                nn = tf.keras.layers.Conv2D(
+                nn = keras.layers.Conv2D(
                     hidden_layer[i],
                     kernel_size=(3, 3),
                     activation='relu',
-                    kernel_regularizer=tf.keras.regularizers.l2(reg),
-                    bias_regularizer=tf.keras.regularizers.l2(reg),
-                    activity_regularizer=tf.keras.regularizers.l2(reg),
+                    kernel_regularizer=keras.regularizers.l2(reg),
+                    bias_regularizer=keras.regularizers.l2(reg),
+                    activity_regularizer=keras.regularizers.l2(reg),
                     name=f'conv_{name}_{i}',
                 )(nn)
-                nn = tf.keras.layers.MaxPooling2D()(nn)
+                nn = keras.layers.MaxPooling2D()(nn)
 
             if drop_out > 0 and (i < (len(hidden_layer) - 1) or last_activation != ''):
-                nn = tf.keras.layers.Dropout(drop_out)(nn)
+                nn = keras.layers.Dropout(drop_out)(nn)
 
         if last_activation != '':
-            nn = tf.keras.layers.Dense(
+            nn = keras.layers.Dense(
                 units=1,
                 activation=last_activation,
-                kernel_regularizer=tf.keras.regularizers.l2(reg),
-                bias_regularizer=tf.keras.regularizers.l2(reg),
-                activity_regularizer=tf.keras.regularizers.l2(reg),
+                kernel_regularizer=keras.regularizers.l2(reg),
+                bias_regularizer=keras.regularizers.l2(reg),
+                activity_regularizer=keras.regularizers.l2(reg),
                 name=f'nn_out_{name}',
             )(nn)
 
         if conv:
-            nn = tf.keras.layers.Flatten(name='flatten')(nn)
+            nn = keras.layers.Flatten(name='flatten')(nn)
 
         if build_bias:
             hidden_part = nn
         else:
-            hidden_part = tf.keras.models.Model(inputs=input_layer, outputs=nn, name=name)
+            hidden_part = keras.models.Model(inputs=input_layer, outputs=nn, name=name)
 
         if self.verbose == 2 and not build_bias:
             hidden_part.summary()
@@ -420,12 +420,12 @@ class BaseModel(BaseEstimator):
         return hidden_part
 
     def _get_ranking_part(self, input_layer, units=1, feature_activation='tanh', reg=0, use_bias=False, name='ranking_part'):
-        out = tf.keras.layers.Dense(
+        out = keras.layers.Dense(
             units=units,
             activation=feature_activation,
             use_bias=use_bias,
-            kernel_regularizer=tf.keras.regularizers.l2(reg),
-            activity_regularizer=tf.keras.regularizers.l2(reg),
+            kernel_regularizer=keras.regularizers.l2(reg),
+            activity_regularizer=keras.regularizers.l2(reg),
             name=name,
         )(input_layer)
 
@@ -526,7 +526,7 @@ class BaseModel(BaseEstimator):
             int: number of trainable weights
         """
 
-        return int(np.sum([tf.keras.backend.count_params(w) for w in self.model.trainable_weights]))  # type: ignore
+        return int(np.sum([keras.backend.count_params(w) for w in self.model.trainable_weights]))  # type: ignore
 
     def convert_array_to_float(self, array):
         if isinstance(array, np.ndarray):

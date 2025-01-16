@@ -3,8 +3,8 @@ from __future__ import annotations
 import gc
 from typing import Any
 
+import keras
 import numpy as np
-import tensorflow as tf
 from squark.utils.sugar import FreeEBOPs
 
 from hepinfo.models.BaseModel import BaseModel
@@ -143,7 +143,7 @@ class BinaryMI(BaseModel):
         """
 
         # placeholders for the inputs: shape depends on whether we have a convnet or not
-        self.x_input = tf.keras.layers.Input(shape=self.input_shape, name='x')
+        self.x_input = keras.layers.Input(shape=self.input_shape, name='x')
 
         # build layers layers
         self.out, self.last_quantized = self._get_hidden_qlayer(
@@ -151,7 +151,7 @@ class BinaryMI(BaseModel):
             hidden_layer=self.hidden_layers,
             drop_out=self.drop_out,
             name='t',
-            kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
+            kernel_regularizer=keras.regularizers.l2(self.kernel_regularizer),
             conv=self.conv,
         )
 
@@ -171,23 +171,23 @@ class BinaryMI(BaseModel):
             metrics = ['AUC'] if self.last_layer_size == 1 else ['acc']
 
         # create the model
-        self.model = tf.keras.models.Model(inputs=self.x_input, outputs=outputs, name=self.name)
+        self.model = keras.models.Model(inputs=self.x_input, outputs=outputs, name=self.name)
 
         if self.print_summary:
             self.model.summary()  # type: ignore
             self._plot_model(self.model, 'binaryMI.png')
 
         # # convert to sequential
-        # seq_model = tf.keras.models.Sequential()
+        # seq_model = keras.models.Sequential()
         # for layer in self.model.layers:
-        #     if isinstance(layer, tf.keras.layers.Layer) and not isinstance(layer, tf.keras.layers.InputLayer):
+        #     if isinstance(layer, keras.layers.Layer) and not isinstance(layer, keras.layers.InputLayer):
         #         seq_model.add(layer)
         # self.model = seq_model
         # self.model.summary()
 
         # setup learning rate schedule
         # TODO: maybe we have to go with a simple learning rate here for the experiments
-        lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+        lr_schedule = keras.optimizers.schedules.InverseTimeDecay(
             self.learning_rate,
             decay_steps=self.learning_rate_decay_steps,
             decay_rate=self.learning_rate_decay_rate,
@@ -233,19 +233,19 @@ class BinaryMI(BaseModel):
         self.input_shape = (x_train.shape[1],)
 
         # convert for classifier output
-        y_train = tf.keras.utils.to_categorical(y_train, self.last_layer_size)
+        y_train = keras.utils.to_categorical(y_train, self.last_layer_size)
 
         self._build_model()
 
         callback = []
         if self.use_s_quark:
-            nan_terminate = tf.keras.callbacks.TerminateOnNaN()
+            nan_terminate = keras.callbacks.TerminateOnNaN()
             ebops = FreeEBOPs()
             callback.append(nan_terminate)
             callback.append(ebops)
 
         if self.use_quantflow:
-            nan_terminate = tf.keras.callbacks.TerminateOnNaN()
+            nan_terminate = keras.callbacks.TerminateOnNaN()
             bops = FreeBOPs()
             callback.append(nan_terminate)
             callback.append(bops)

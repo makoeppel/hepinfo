@@ -1,3 +1,4 @@
+import keras
 import tensorflow as tf
 
 
@@ -11,7 +12,7 @@ def grad_reverse(x):
     return y, custom_grad
 
 
-class GradReverse(tf.keras.layers.Layer):
+class GradReverse(keras.layers.Layer):
     def __init__(self):
         super().__init__()
 

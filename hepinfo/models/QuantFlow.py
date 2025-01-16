@@ -1,5 +1,6 @@
 import random
 
+import keras
 import tensorflow as tf
 from keras.api import Model
 from keras.api.callbacks import Callback
@@ -67,7 +68,7 @@ def quantized_relu(x, bits, max_value, round_type):
     return relu + tf.stop_gradient(quantized - relu)  # STE approximation
 
 
-class TQActivation(tf.keras.layers.Layer):
+class TQActivation(keras.layers.Layer):
     def __init__(
         self, input_shape, bits, min_bits=0, max_bits=32, clip_min=-1.0, clip_max=1.0, round_type=1, alpha='random', **kwargs
     ):
@@ -99,7 +100,7 @@ class TQActivation(tf.keras.layers.Layer):
         self.activation_bits = self.add_weight(
             name='bits',
             shape=(input_shape[-1],),
-            initializer=tf.keras.initializers.Constant(self.bits),
+            initializer=keras.initializers.Constant(self.bits),
             trainable=True,
         )
 
@@ -151,7 +152,7 @@ class TQActivation(tf.keras.layers.Layer):
         return config
 
 
-class TQDense(tf.keras.layers.Layer):
+class TQDense(keras.layers.Layer):
     def __init__(
         self,
         units,
@@ -211,21 +212,21 @@ class TQDense(tf.keras.layers.Layer):
         self.weight_bits = self.add_weight(
             name='weight_bits',
             shape=(input_shape[-1], self.units),
-            initializer=tf.keras.initializers.Constant(self.init_bits_weight),
+            initializer=keras.initializers.Constant(self.init_bits_weight),
             trainable=True,
             dtype=tf.float32,
         )
         self.activation_bits = self.add_weight(
             name='activation_bits',
             shape=(self.units,),
-            initializer=tf.keras.initializers.Constant(self.init_bits_activation),
+            initializer=keras.initializers.Constant(self.init_bits_activation),
             trainable=True,
             dtype=tf.float32,
         )
         self.bias_bits = self.add_weight(
             name='bias_bits',
             shape=(self.units,),
-            initializer=tf.keras.initializers.Constant(self.init_bits_bias),
+            initializer=keras.initializers.Constant(self.init_bits_bias),
             trainable=True,
             dtype=tf.float32,
         )

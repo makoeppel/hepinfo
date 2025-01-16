@@ -4,11 +4,12 @@ import logging
 import re
 import warnings
 
+import keras
 import numpy as np
 import tensorflow as tf
-import tensorflow.keras.backend as K
+from keras import backend as K
+from keras.api import activations, constraints, initializers, regularizers
 from pyparsing import Group, Optional, Regex, Suppress, delimitedList
-from tensorflow.keras import activations, constraints, initializers, regularizers
 
 
 def _create_variable_name(attr_name, var_name=None):
@@ -242,7 +243,7 @@ def set_internal_sigmoid(mode):
     elif mode == 'smooth':
         _sigmoid = smooth_sigmoid
     elif mode == 'real':
-        _sigmoid = tf.keras.backend.sigmoid
+        _sigmoid = keras.backend.sigmoid
 
 
 set_internal_sigmoid(_default_sigmoid_type)
@@ -368,12 +369,12 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
 
         if self.use_sigmoid:
             p = _sigmoid(x / m_i) * m
-            xq = m_i * tf.keras.backend.clip(
+            xq = m_i * keras.backend.clip(
                 2.0 * (_round_through(p, self.use_stochastic_rounding, training=training) / m) - 1.0, 0.0, 1.0 - 1.0 / m
             )
             if self.negative_slope > 0:
                 neg_factor = 1 / (self.negative_slope * m)
-                xq = xq + m_i * self.negative_slope * tf.keras.backend.clip(
+                xq = xq + m_i * self.negative_slope * keras.backend.clip(
                     2.0 * (_round_through(p * self.negative_slope, self.use_stochastic_rounding, training=training) * neg_factor)
                     - 1.0,
                     -1.0,
@@ -381,13 +382,13 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
                 )
         else:
             p = x * m / m_i
-            xq = m_i * tf.keras.backend.clip(
+            xq = m_i * keras.backend.clip(
                 _round_through(p, self.use_stochastic_rounding, training=training) / m, 0.0, 1.0 - 1.0 / m
             )
             if self.negative_slope > 0:
                 neg_factor = 1 / (self.negative_slope * m)
                 xq = xq + m_i * self.negative_slope * (
-                    tf.keras.backend.clip(
+                    keras.backend.clip(
                         _round_through(p * self.negative_slope, self.use_stochastic_rounding, training=training) * neg_factor,
                         -1.0,
                         0.0,
@@ -521,7 +522,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
             std = 1.0
 
         if self.use_real_sigmoid:
-            p = tf.keras.backend.sigmoid(self.temperature * x / std)
+            p = keras.backend.sigmoid(self.temperature * x / std)
         else:
             p = _sigmoid(self.temperature * x / std)
         r = tf.random.uniform(tf.shape(x))
@@ -563,7 +564,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
         return config
 
 
-class QActivation(tf.keras.layers.Layer):
+class QActivation(keras.layers.Layer):
     """Implements quantized activation layers."""
 
     def __init__(self, activation, **kwargs):
@@ -845,7 +846,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
             return 0.0
         unsigned_bits = self.bits - self.keep_negative
         if unsigned_bits > 0:
-            return -max(1.0, np.array(tf.keras.ops.pow(2, tf.keras.ops.cast(self.integer, dtype='float32')), dtype='float32'))
+            return -max(1.0, np.array(keras.ops.pow(2, keras.ops.cast(self.integer, dtype='float32')), dtype='float32'))
         else:
             return -1.0
 
@@ -859,7 +860,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
         x = np.asarray(range(2**self.bits), dtype=np.float32)
         p_and_n = np.where(x >= 2 ** (self.bits - 1), (x - 2 ** (self.bits - 1)) - 2 ** (self.bits - 1), x)
         return p_and_n * np.array(
-            tf.keras.ops.pow(2.0, -self.bits + tf.keras.ops.cast(self.integer, dtype='float32') + 1), dtype='float32'
+            keras.ops.pow(2.0, -self.bits + keras.ops.cast(self.integer, dtype='float32') + 1), dtype='float32'
         )
 
     @classmethod
@@ -879,7 +880,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
         return config
 
 
-class Clip(tf.keras.constraints.Constraint):
+class Clip(keras.constraints.Constraint):
     """Clips weight constraint."""
 
     # This function was modified from Keras minmaxconstraints.
@@ -895,7 +896,7 @@ class Clip(tf.keras.constraints.Constraint):
 
         self.min_value = min_value
         self.max_value = max_value
-        self.constraint = tf.keras.constraints.get(constraint)
+        self.constraint = keras.constraints.get(constraint)
         # Don't wrap yourself
         if isinstance(self.constraint, Clip):
             self.constraint = None
@@ -918,7 +919,7 @@ class Clip(tf.keras.constraints.Constraint):
     def from_config(cls, config):
         if isinstance(config.get('constraint', None), Clip):
             config['constraint'] = None
-        config['constraint'] = tf.keras.constraints.get(config.get('constraint', None))
+        config['constraint'] = keras.constraints.get(config.get('constraint', None))
         config['quantizer'] = get_quantizer(config.get('quantizer', None))
         return cls(**config)
 
@@ -941,16 +942,16 @@ def get_initializer(identifier):
         if identifier['class_name'] == 'QInitializer':
             return QInitializer.from_config(identifier['config'])
         else:
-            return tf.keras.initializers.get(identifier)
+            return keras.initializers.get(identifier)
     elif isinstance(identifier, str):
-        return tf.keras.initializers.get(identifier)
+        return keras.initializers.get(identifier)
     elif callable(identifier):
         return identifier
     else:
         raise ValueError('Could not interpret initializer identifier: ' + str(identifier))
 
 
-class QInitializer(tf.keras.initializers.Initializer):
+class QInitializer(keras.initializers.Initializer):
     """Wraps around Keras initializer to provide a fanin scaling factor."""
 
     def __init__(self, initializer, use_scale, quantizer):
@@ -1020,7 +1021,7 @@ def get_constraint(identifier, quantizer):
         if isinstance(identifier, dict) and identifier['class_name'] == 'Clip':
             return Clip.from_config(identifier['config'])
         else:
-            return tf.keras.constraints.get(identifier)
+            return keras.constraints.get(identifier)
     else:
         max_value = max(1, quantizer.max()) if hasattr(quantizer, 'max') else 1.0
         return Clip(-max_value, max_value, identifier, quantizer)
@@ -1031,8 +1032,8 @@ def get_auto_range_constraint_initializer(quantizer, constraint, initializer):
 
     Arguments:
      quantizer: A quantizer class in quantizers.py.
-     constraint: A tf.keras constraint.
-     initializer: A tf.keras initializer.
+     constraint: A keras constraint.
+     initializer: A keras initializer.
 
     Returns:
       a tuple (constraint, initializer), where
@@ -1145,7 +1146,7 @@ def safe_eval(eval_str, op_dict, *params, **kwparams):  # pylint: disable=invali
     # must be Keras activation object if None
     if quantizer is None:
         logging.info('keras dict %s', function_split[0])
-        quantizer = tf.keras.activations.get(function_split[0])
+        quantizer = keras.activations.get(function_split[0])
 
     if len(function_split) == 2 or args or kwargs:
         return quantizer(*args, **kwargs)
@@ -1178,7 +1179,7 @@ def get_quantizer(identifier):
     if identifier is None:
         return None
     if isinstance(identifier, dict):
-        return tf.keras.utils.deserialize_keras_object(identifier, module_objects=globals(), printable_module_name='quantizer')
+        return keras.utils.deserialize_keras_object(identifier, module_objects=globals(), printable_module_name='quantizer')
     elif isinstance(identifier, str):
         return safe_eval(identifier, globals())
     elif callable(identifier):
@@ -1187,7 +1188,7 @@ def get_quantizer(identifier):
         raise ValueError('Could not interpret quantizer identifier: ' + str(identifier))
 
 
-class QDense(tf.keras.layers.Dense):
+class QDense(keras.layers.Dense):
     """Implements a quantized Dense layer."""
 
     # Most of these parameters follow the implementation of Dense in
@@ -1363,7 +1364,7 @@ class quantized_sigmoid(BaseQuantizer):  # pylint: disable=invalid-name
 
         p = K.sigmoid(x) if self.use_real_sigmoid else _sigmoid(x)
 
-        return tf.keras.backend.clip(
+        return keras.backend.clip(
             (_round_through(p * m, self.use_stochastic_rounding) / m), (1.0 * self.symmetric) / m, 1.0 - 1.0 / m
         )
 

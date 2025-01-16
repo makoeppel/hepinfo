@@ -4,9 +4,8 @@ import tensorflow as tf
 from keras.api import layers, ops
 from keras.api.regularizers import L2
 from sklearn.base import BaseEstimator
-from squark.config import QuantizerConfig, QuantizerConfigScope
+from squark.config import QuantizerConfigScope, global_config
 from squark.layers import QDense as SQDense
-from squark.regularizers import MonoL1
 from squark.utils.sugar import FreeEBOPs
 
 from hepinfo.models.qkerasV3 import QActivation, QDense, quantized_sigmoid
@@ -291,26 +290,20 @@ class MiVAE(BaseEstimator, keras.Model):
             if self.mi_loss:
                 mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-            total_bops = 0
-            total_bops_std = []
-            if self.use_quantflow:
-                for layer in self.encoder.layers:
-                    if hasattr(layer, 'compute_bops'):
-                        total_bops += layer.compute_bops()
-                    if hasattr(layer, 'compute_bops_std'):
-                        total_bops_std.append(layer.compute_bops_std())
-                if type(self.alpha) is not str:
-                    total_bops *= self.alpha
+            # total_bops = 0
+            # total_bops_std = []
+            # if self.use_quantflow:
+            #     for layer in self.encoder.layers:
+            #         if hasattr(layer, 'compute_bops'):
+            #             total_bops += layer.compute_bops()
+            #         if hasattr(layer, 'compute_bops_std'):
+            #             total_bops_std.append(layer.compute_bops_std())
+            #     if type(self.alpha) is not str:
+            #         total_bops *= self.alpha
 
-            total_ebops = 0
-            if self.use_quantflow:
-                for loss in self.encoder.losses:
-                    total_ebops = loss + total_ebops
-                for layer in self.encoder.layers:
-                    if hasattr(layer, '_compute_ebops'):
-                        total_ebops += layer._beta * layer._compute_ebops()
+            total_bops = sum([layer.ebops for layer in self.encoder.layers if hasattr(layer, 'ebops')])
 
-            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops + total_ebops
+            total_loss = reconstruction_loss + kl_loss + mi_loss + sum(self.encoder.losses)
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -347,7 +340,7 @@ class MiVAE(BaseEstimator, keras.Model):
         if self.mi_loss:
             mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-        total_loss = reconstruction_loss + kl_loss + mi_loss
+        total_loss = reconstruction_loss + kl_loss + mi_loss + sum(self.encoder.losses)
 
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
@@ -379,10 +372,11 @@ class MiVAE(BaseEstimator, keras.Model):
             x = TQActivation(self.inputshape, bits=self.init_quantized_bits, alpha=self.alpha)(encoder_inputs)
         if self.use_s_quark:
             x = encoder_inputs
-            iq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1000))
+            # iq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(2e-6))
             # oq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1000))
-            scope0 = QuantizerConfigScope(place='all', k0=1, b0=16, i0=8, default_q_type='kbi', overflow_mode='sat_sym')
-            scope1 = QuantizerConfigScope(place='datalane', k0=0, default_q_type='kif', overflow_mode='sat_sym', f0=8, i0=8)
+            global_config['beta0'] = self.beta0
+            scope0 = QuantizerConfigScope(place='all', k0=1, b0=4, i0=2, default_q_type='kbi', overflow_mode='sat_sym')
+            scope1 = QuantizerConfigScope(place='datalane', k0=1, default_q_type='kif', overflow_mode='sat_sym', f0=2, i0=2)
 
         if not self.use_qkeras and not self.use_quantflow and not self.use_s_quark:
             x = encoder_inputs
@@ -401,11 +395,11 @@ class MiVAE(BaseEstimator, keras.Model):
             elif self.use_s_quark:
                 with scope0, scope1:
                     if i == 0:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0, name='input')(x)
+                        x = SQDense(layer, activation=self.activation, name='input')(x)
                     elif i == len(self.hidden_layers) - 1:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0, name='output')(x)
+                        x = SQDense(layer, activation=self.activation, name='output')(x)
                     else:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0)(x)
+                        x = SQDense(layer, activation=self.activation)(x)
             else:
                 x = layers.Dense(
                     layer,
@@ -436,8 +430,8 @@ class MiVAE(BaseEstimator, keras.Model):
             )(x)
         elif self.use_s_quark:
             with scope0, scope1:
-                z_mean = SQDense(self.latent_dims, activation='linear', beta0=self.beta0)(x)
-                z_log_var = SQDense(self.latent_dims, activation='linear', beta0=self.beta0)(x)
+                z_mean = SQDense(self.latent_dims, activation='linear')(x)
+                z_log_var = SQDense(self.latent_dims, activation='linear')(x)
         elif self.use_quantflow:
             z_mean = TQDense(
                 self.latent_dims, name='z_mean', init_bits=self.init_quantized_bits, activation='linear', alpha=self.alpha

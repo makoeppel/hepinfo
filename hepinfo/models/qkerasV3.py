@@ -147,7 +147,7 @@ def _get_scaling_axis(scale_axis, len_axis):
         axis = list(range(scale_axis))
         axis += list(range(scale_axis + 1, len_axis))
     else:
-        if ops.image_data_format() == 'channels_last':
+        if keras.backend.image_data_format() == 'channels_last':
             axis = list(range(len_axis - 1))
         else:
             axis = list(range(1, len_axis))
@@ -197,9 +197,9 @@ def _get_scale(alpha, x, q, scale_axis=None, per_channel_scale=True):
                 qx = x * q
                 qq = q * q
 
-        scale = qx / (qq + ops.epsilon())
+        scale = qx / (qq + keras.backend.epsilon())
         if alpha == 'auto_po2':
-            scale = ops.power(2.0, tf.math.round(ops.log(scale + ops.epsilon()) / np.log(2.0)))
+            scale = ops.power(2.0, tf.math.round(ops.log(scale + keras.backend.epsilon()) / np.log(2.0)))
     elif alpha is None:
         scale = 1.0
     elif isinstance(alpha, np.ndarray):
@@ -360,13 +360,11 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
             ops.power(tf.constant(2.0, tf.float32), ops.cast(self.integer, dtype='float32') - non_sign_bits), dtype='float32'
         )
         if self.is_quantized_clip:
-            x_u = tf.where(x <= m_i - m_f, ops.relu(x, alpha=self.negative_slope), tf.ones_like(x) * (m_i - m_f))
+            x_u = tf.where(x <= m_i - m_f, ops.relu(x), tf.ones_like(x) * (m_i - m_f))
         elif self.relu_upper_bound is not None:
-            x_u = tf.where(
-                x <= self.relu_upper_bound, ops.relu(x, alpha=self.negative_slope), tf.ones_like(x) * self.relu_upper_bound
-            )
+            x_u = tf.where(x <= self.relu_upper_bound, ops.relu(x), tf.ones_like(x) * self.relu_upper_bound)
         else:
-            x_u = ops.relu(x, alpha=self.negative_slope)
+            x_u = ops.relu(x)
 
         if self.use_sigmoid:
             p = _sigmoid(x / m_i) * m
@@ -383,9 +381,7 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
                 )
         else:
             p = x * m / m_i
-            xq = m_i * keras.backend.clip(
-                _round_through(p, self.use_stochastic_rounding, training=training) / m, 0.0, 1.0 - 1.0 / m
-            )
+            xq = m_i * ops.clip(_round_through(p, self.use_stochastic_rounding, training=training) / m, 0.0, 1.0 - 1.0 / m)
             if self.negative_slope > 0:
                 neg_factor = 1 / (self.negative_slope * m)
                 xq = xq + m_i * self.negative_slope * (
@@ -520,7 +516,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
             else:
                 axis = [0]
 
-            std = ops.std(x, axis=axis, keepdims=True) + ops.epsilon()
+            std = ops.std(x, axis=axis, keepdims=True) + keras.backend.epsilon()
         else:
             std = 1.0
 
@@ -757,7 +753,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
 
             # If alpha is "auto_po2", then get the "best" po2 scale
             if 'po2' in self.alpha:
-                scale = ops.power(2.0, tf.math.round(ops.log(scale + ops.epsilon()) / np.log(2.0)))
+                scale = ops.power(2.0, tf.math.round(ops.log(scale + keras.backend.epsilon()) / np.log(2.0)))
                 for _ in range(5):
                     v = tf.floor(tf.abs(x) / scale + 0.5)
                     mask = v < levels / 2
@@ -1283,7 +1279,7 @@ class QDense(keras.layers.Dense):
                 quantized_bias = self.bias_quantizer_internal(self.bias)
             else:
                 quantized_bias = self.bias
-            output = ops.bias_add(output, quantized_bias, data_format='channels_last')
+            output = tf.nn.bias_add(output, quantized_bias, data_format='N...C')
         if self.activation is not None:
             output = self.activation(output)
         return output

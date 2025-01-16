@@ -45,13 +45,13 @@ MiVAE_model = MiVAE(
     batch_size=1024,
     beta_param=1,
     alpha=1,  # can be also set to random to have random alphas for each layer
-    beta0=10,
+    beta0=1e-6,
     init_quantized_bits=16,  # can be set to random to have random bit size for each value
     input_quantized_bits='quantized_bits(16, 6, 0)',
     quantized_bits='quantized_bits(16, 6, 0, use_stochastic_rounding=True)',
     quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
     drop_out=0.0,
-    epoch=10,
+    epoch=50,
     gamma=1,
     num_samples=10,
     hidden_layers=[32, 16],

@@ -1,46 +1,31 @@
-import numpy as np
-import awkward as ak
-import tensorflow as tf
 import matplotlib.pyplot as plt
+import mplhep
+import numpy as np
+import tensorflow as tf
+from sklearn.metrics import auc, roc_curve
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 
 from hepinfo.models.MiVAE import MiVAE
-from hepinfo.util import readFromAnomalyBackgroundh5, readFromAnomalySignalh5, awkward_to_numpy
-from hepinfo.models.QuantFlow import TQDense, TQActivation
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-from sklearn.metrics import roc_curve, auc
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn import linear_model
-from sklearn.metrics import roc_auc_score
-
-import keras
-from tensorflow.keras import layers
-from squark.layers import QDense
-
-
-from functools import partial
-
-from scipy.stats import ks_2samp
-
-import h5py
-import mplhep
 mplhep.style.use('CMS')
 
 # read in the data
-normal_data = np.load("../data/normal_data.npy", allow_pickle=True)
-abnormal_data = np.load("../data/abnormal_data.npy", allow_pickle=True)
+normal_data = np.load('../data/normal_data.npy', allow_pickle=True)
+abnormal_data = np.load('../data/abnormal_data.npy', allow_pickle=True)
 
 # perform some pre-processing and split into train test
-nPV = normal_data[:,0]
-nPV_abnormal = abnormal_data[:,0]
-X = normal_data[:,1:]
-abnormal_data = abnormal_data[:,1:]
+nPV = normal_data[:, 0]
+nPV_abnormal = abnormal_data[:, 0]
+X = normal_data[:, 1:]
+abnormal_data = abnormal_data[:, 1:]
 
 X_train, X_test, nPV_train, nPV_test = train_test_split(X, nPV, shuffle=True)
-abnormal_data_train, abnormal_data_test, nPV_abnormal_train, nPV_abnormal_test = train_test_split(abnormal_data, nPV_abnormal, shuffle=True)
+abnormal_data_train, abnormal_data_test, nPV_abnormal_train, nPV_abnormal_test = train_test_split(
+    abnormal_data, nPV_abnormal, shuffle=True
+)
 
-scaler = MinMaxScaler() # add robast scaler
+scaler = MinMaxScaler()  # add robast scaler
 X_train = scaler.fit_transform(X_train)
 X_test = scaler.transform(X_test)
 abnormal_data_train_scaled = scaler.transform(abnormal_data_train)
@@ -51,7 +36,7 @@ use_s_quark = True
 use_qkeras = False
 MiVAE_model = MiVAE(
     verbose=2,
-    activation="tanh",
+    activation='tanh',
     use_s_quark=use_s_quark,
     use_qkeras=use_qkeras,
     use_quantflow=use_quantflow,
@@ -59,12 +44,12 @@ MiVAE_model = MiVAE(
     use_quantized_sigmoid=False,
     batch_size=1024,
     beta_param=1,
-    alpha=1, # can be also set to random to have random alphas for each layer
+    alpha=1,  # can be also set to random to have random alphas for each layer
     beta0=10,
-    init_quantized_bits=16, # can be set to random to have random bit size for each value
-    input_quantized_bits="quantized_bits(16, 6, 0)",
-    quantized_bits="quantized_bits(16, 6, 0, use_stochastic_rounding=True)",
-    quantized_activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)",
+    init_quantized_bits=16,  # can be set to random to have random bit size for each value
+    input_quantized_bits='quantized_bits(16, 6, 0)',
+    quantized_bits='quantized_bits(16, 6, 0, use_stochastic_rounding=True)',
+    quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
     drop_out=0.0,
     epoch=10,
     gamma=1,
@@ -72,16 +57,16 @@ MiVAE_model = MiVAE(
     hidden_layers=[32, 16],
     latent_dims=8,
     learning_rate=0.001,
-    optimizer="Adam",
+    optimizer='Adam',
     patience=100,
     mi_loss=True,
-    run_eagerly=False
+    run_eagerly=False,
 )
-print("Fit gamma ", 0.1)
+print('Fit gamma ', 0.1)
 history = MiVAE_model.fit(X_train, nPV_train)
 
 for layer in MiVAE_model.encoder.layers:
-    if hasattr(layer, "_beta"):
+    if hasattr(layer, '_beta'):
         tf.print(layer._beta)
 
 # get data

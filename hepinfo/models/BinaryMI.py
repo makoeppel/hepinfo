@@ -1,68 +1,68 @@
 from __future__ import annotations
-from typing import Any, Union
 
 import gc
-import tensorflow as tf
-import numpy as np
+from typing import Any
 
-from hepinfo.models.BaseModel import BaseModel
+import numpy as np
+import tensorflow as tf
+from squark.utils.sugar import FreeEBOPs
+
 from hepinfo.models.BaseModel import BaseModel
 from hepinfo.models.QuantFlow import FreeBOPs
 from hepinfo.util import mutual_information_bernoulli_loss
 
-from squark.utils.sugar import FreeEBOPs
-
 
 class BinaryMI(BaseModel):
     """
-        Stochastically Quantized Neural Network which has a bernoulli
-        activation after each layer to exactly compute the mutual information.
+    Stochastically Quantized Neural Network which has a bernoulli
+    activation after each layer to exactly compute the mutual information.
     """
 
-    def __init__(self,
-                # BinaryMI HPs
-                hidden_layers: list[int] = [1024, 512, 128],
-                batch_normalisation_layers: list[int] = [1024, 512, 128],
-                quantized_position: list[bool] = [False, True, False],
-                batch_normalisation: bool = False,
-                activation_binary: str = 'bernoulli',
-                activation_nonbinary: str = 'tanh',
-                acitvation_last_layer: str = 'sigmoid',
-                kernel_regularizer: float = 0.01,
-                drop_out: float = 0.,
-                gamma: float = 0.0,
-                use_s_quark: bool = False,
-                use_qkeras: bool = False,
-                use_quantflow: bool = False,
-                init_quantized_bits=32,
-                input_quantized_bits="quantized_bits(16, 6, 0)",
-                quantized_bits="quantized_bits(16, 6, 0, use_stochastic_rounding=True)",
-                quantized_activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)",
-                alpha=1,
-                beta0=1,
-                # Common HPs
-                batch_size: int = 200,
-                learning_rate: float = 0.001,
-                learning_rate_decay_rate: float = 1,
-                learning_rate_decay_steps: int = 1000,
-                optimizer: str = "Adam",
-                epoch: int = 10,
-                loss: str = 'binary_crossentropy',
-                run_eagerly: bool = False,
-                # other variables
-                verbose: int = 0,
-                validation_size: float = 0.1,
-                input_shape: Union[tuple, int] = 0,
-                last_layer_size: int = 2,
-                random_seed: int = 42,
-                name: str = "BinaryMI",
-                dataset_name: str = "Mnist",
-                print_summary: bool = False,
-                bits: int = 2,
-                checkpoint_path: str = "",
-                datetime: str = "",
-                conv: bool = False
-        ) -> None:
+    def __init__(
+        self,
+        # BinaryMI HPs
+        hidden_layers: list[int] = [1024, 512, 128],
+        batch_normalisation_layers: list[int] = [1024, 512, 128],
+        quantized_position: list[bool] = [False, True, False],
+        batch_normalisation: bool = False,
+        activation_binary: str = 'bernoulli',
+        activation_nonbinary: str = 'tanh',
+        acitvation_last_layer: str = 'sigmoid',
+        kernel_regularizer: float = 0.01,
+        drop_out: float = 0.0,
+        gamma: float = 0.0,
+        use_s_quark: bool = False,
+        use_qkeras: bool = False,
+        use_quantflow: bool = False,
+        init_quantized_bits=32,
+        input_quantized_bits='quantized_bits(16, 6, 0)',
+        quantized_bits='quantized_bits(16, 6, 0, use_stochastic_rounding=True)',
+        quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
+        alpha=1,
+        beta0=1,
+        # Common HPs
+        batch_size: int = 200,
+        learning_rate: float = 0.001,
+        learning_rate_decay_rate: float = 1,
+        learning_rate_decay_steps: int = 1000,
+        optimizer: str = 'Adam',
+        epoch: int = 10,
+        loss: str = 'binary_crossentropy',
+        run_eagerly: bool = False,
+        # other variables
+        verbose: int = 0,
+        validation_size: float = 0.1,
+        input_shape: tuple | int = 0,
+        last_layer_size: int = 2,
+        random_seed: int = 42,
+        name: str = 'BinaryMI',
+        dataset_name: str = 'Mnist',
+        print_summary: bool = False,
+        bits: int = 2,
+        checkpoint_path: str = '',
+        datetime: str = '',
+        conv: bool = False,
+    ) -> None:
         super().__init__(
             # DirectRankerAdv HPs
             hidden_layers=hidden_layers,
@@ -104,7 +104,7 @@ class BinaryMI(BaseModel):
             datetime=datetime,
             run_eagerly=run_eagerly,
             last_layer_size=last_layer_size,
-            conv=conv
+            conv=conv,
         )
 
         self.x_input = Any
@@ -113,60 +113,57 @@ class BinaryMI(BaseModel):
 
     def _build_model(self) -> None:
         r"""
-            Is building the model by sequential adding layers.
+        Is building the model by sequential adding layers.
 
-            1. The data (x) gets into an input layer which is activated
-            with a bernoulli layer via a sigmoid:
+        1. The data (x) gets into an input layer which is activated
+        with a bernoulli layer via a sigmoid:
 
-            .. math::
-                \hat{x} = \mathrm{Bern} (\sigma(6.0 \cdot x / 1.0))
+        .. math::
+            \hat{x} = \mathrm{Bern} (\sigma(6.0 \cdot x / 1.0))
 
-            2. The size of the next layers are defined with self.hidden_layers.
-            The basic architecture is build via:
+        2. The size of the next layers are defined with self.hidden_layers.
+        The basic architecture is build via:
 
-            .. code-block:: python
+        .. code-block:: python
 
-                for i in self.hidden_layers:
-                    layer = Dense()(layer)
-                    layer = QActivation("bernoulli")(layer)
+            for i in self.hidden_layers:
+                layer = Dense()(layer)
+                layer = QActivation('bernoulli')(layer)
 
-            3. To avoid overfitting it is often useful to lower the learning rate
-            during the training. Therefore, the model is build using a schedule
-            which applies the inverse decay function to an initial learning rate.
+        3. To avoid overfitting it is often useful to lower the learning rate
+        during the training. Therefore, the model is build using a schedule
+        which applies the inverse decay function to an initial learning rate.
 
-            4. Different optimizers can be used such as Adam, Nadam or SGD.
+        4. Different optimizers can be used such as Adam, Nadam or SGD.
 
-            Args:
-                NoInput
-            Returns:
-                None
+        Args:
+            NoInput
+        Returns:
+            None
         """
 
         # placeholders for the inputs: shape depends on whether we have a convnet or not
-        self.x_input = tf.keras.layers.Input(
-            shape=self.input_shape,
-            name="x"
-        )
+        self.x_input = tf.keras.layers.Input(shape=self.input_shape, name='x')
 
         # build layers layers
         self.out, self.last_quantized = self._get_hidden_qlayer(
             self.x_input,
             hidden_layer=self.hidden_layers,
             drop_out=self.drop_out,
-            name="t",
+            name='t',
             kernel_regularizer=tf.keras.regularizers.l2(self.kernel_regularizer),
-            conv=self.conv
+            conv=self.conv,
         )
 
         if sum(self.quantized_position) > 0:
             outputs = [self.out, self.last_quantized]
             self.index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
-            loss = {
-                f"t_{len(self.hidden_layers)}": self.loss,
-                f"t_{self.index_qact}": mutual_information_bernoulli_loss
+            loss = {f't_{len(self.hidden_layers)}': self.loss, f't_{self.index_qact}': mutual_information_bernoulli_loss}
+            lossWeights = {f't_{len(self.hidden_layers)}': float(1 - self.gamma), f't_{self.index_qact}': float(self.gamma)}
+            metrics = {
+                f't_{len(self.hidden_layers)}': 'AUC' if self.last_layer_size == 1 else 'acc',
+                f't_{self.index_qact}': 'acc',
             }
-            lossWeights = {f"t_{len(self.hidden_layers)}": float(1 - self.gamma), f"t_{self.index_qact}": float(self.gamma)}
-            metrics = {f"t_{len(self.hidden_layers)}": 'AUC' if self.last_layer_size == 1 else 'acc', f"t_{self.index_qact}": 'acc'}
         else:
             outputs = self.out
             loss = [self.loss]
@@ -174,15 +171,11 @@ class BinaryMI(BaseModel):
             metrics = ['AUC'] if self.last_layer_size == 1 else ['acc']
 
         # create the model
-        self.model = tf.keras.models.Model(
-            inputs=self.x_input,
-            outputs=outputs,
-            name=self.name
-        )
+        self.model = tf.keras.models.Model(inputs=self.x_input, outputs=outputs, name=self.name)
 
         if self.print_summary:
-            self.model.summary() # type: ignore
-            self._plot_model(self.model, "binaryMI.png")
+            self.model.summary()  # type: ignore
+            self._plot_model(self.model, 'binaryMI.png')
 
         # # convert to sequential
         # seq_model = tf.keras.models.Sequential()
@@ -198,40 +191,37 @@ class BinaryMI(BaseModel):
             self.learning_rate,
             decay_steps=self.learning_rate_decay_steps,
             decay_rate=self.learning_rate_decay_rate,
-            staircase=False
+            staircase=False,
         )
 
         if sum(self.quantized_position) > 0:
-            self.model.compile( # type: ignore
+            self.model.compile(  # type: ignore
                 optimizer=self.optimizer(lr_schedule),
                 loss=loss,
                 loss_weights=lossWeights,
                 metrics=metrics,
-                run_eagerly=self.run_eagerly
+                run_eagerly=self.run_eagerly,
             )
         else:
-            self.model.compile( # type: ignore
-                optimizer=self.optimizer(lr_schedule),
-                loss=loss,
-                metrics=metrics,
-                run_eagerly=self.run_eagerly
+            self.model.compile(  # type: ignore
+                optimizer=self.optimizer(lr_schedule), loss=loss, metrics=metrics, run_eagerly=self.run_eagerly
             )
 
     def fit(self, x_train: np.ndarray, y_train: np.ndarray, s_train: np.ndarray, **fit_params: dict[Any, Any]) -> None:
         """
-            Fit function which first build the model and than
-            fits it using x_train and y_train. A special callback
-            class is used to compute the mutual information at the
-            beginning of each epoch and at the end of the training.
+        Fit function which first build the model and than
+        fits it using x_train and y_train. A special callback
+        class is used to compute the mutual information at the
+        beginning of each epoch and at the end of the training.
 
-            Args:
-                NDArray: x_train
-                NDArray: y_train
-                NDArray: s_train
-                dict[Any]: fit_params
+        Args:
+            NDArray: x_train
+            NDArray: y_train
+            NDArray: s_train
+            dict[Any]: fit_params
 
-            Returns:
-                None
+        Returns:
+            None
         """
 
         # get the correct numpy type
@@ -240,7 +230,7 @@ class BinaryMI(BaseModel):
         s_train = self.convert_array_to_float(s_train)
 
         # input size
-        self.input_shape = (x_train.shape[1], )
+        self.input_shape = (x_train.shape[1],)
 
         # convert for classifier output
         y_train = tf.keras.utils.to_categorical(y_train, self.last_layer_size)
@@ -261,12 +251,9 @@ class BinaryMI(BaseModel):
             callback.append(bops)
 
         if sum(self.quantized_position) > 0:
-            y_train = {
-                f"t_{len(self.hidden_layers)}": y_train,
-                f"t_{self.index_qact}": s_train
-            }
+            y_train = {f't_{len(self.hidden_layers)}': y_train, f't_{self.index_qact}': s_train}
 
-        history = self.model.fit( # type: ignore
+        history = self.model.fit(  # type: ignore
             x=x_train,
             y=y_train,
             batch_size=self.batch_size,
@@ -274,7 +261,7 @@ class BinaryMI(BaseModel):
             verbose=self.verbose,
             shuffle=True,
             validation_split=self.validation_size,
-            callbacks=callback
+            callbacks=callback,
         )
         # https://github.com/tensorflow/tensorflow/issues/14181
         # https://github.com/tensorflow/tensorflow/issues/30324
@@ -284,21 +271,19 @@ class BinaryMI(BaseModel):
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         """
-            Get the class probablities.
+        Get the class probablities.
 
-            Args:
-                NDArray: features
-            Returns:
-                NDArray: class probablities
+        Args:
+            NDArray: features
+        Returns:
+            NDArray: class probablities
         """
 
         if len(features.shape) == 1:
-            features = [features] # type: ignore
+            features = [features]  # type: ignore
 
-        res = self.model.predict( # type: ignore
-            features,
-            batch_size=self.batch_size,
-            verbose=str(self.verbose)
+        res = self.model.predict(  # type: ignore
+            features, batch_size=self.batch_size, verbose=str(self.verbose)
         )[0]
 
         return res

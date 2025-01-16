@@ -1,26 +1,49 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+
+requires = [ "qkeras", "setuptools>=42", "six", "tensorflow", "wheel" ]
+
 [project]
 name = "hepinfo"
 version = "0.0.1"
-authors = [
-  { name="Anonymous", email="Anonymous@Anonymous.com" }
-]
 description = "Mutual Information techniques for decorrelation of physics data"
 readme = "README.md"
+authors = [ { name = "Anonymous", email = "Anonymous@Anonymous.com" } ]
 requires-python = ">=3.8"
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 
-[build-system]
-requires = ["setuptools>=42", "wheel", "six", "tensorflow", "qkeras"]
-build-backend = "setuptools.build_meta"
+urls.Homepage = "https://anonymous.com"
+urls.Issues = "https://anonymous.com"
 
 [tool.setuptools]
-packages = ["hepinfo"]
-package-dir = {"" = "."}
+packages = [ "hepinfo" ]
+package-dir = { "" = "." }
 
-[project.urls]
-Homepage = "https://anonymous.com"
-Issues = "https://anonymous.com"
+[tool.ruff]
+target-version = "py310"
+
+line-length = 130
+indent-width = 4
+
+include = [ "**/*.py" ]
+
+format.indent-style = "space"
+format.quote-style = "single"
+format.skip-magic-trailing-comma = false
+format.docstring-code-line-length = 130
+format.docstring-code-format = true
+lint.select = [ "E", "F", "F401", "I", "W" ]
+lint.ignore = [ "E501", "E722", "F403", "F405" ]
+lint.explicit-preview-rules = true
+lint.fixable = [ "ALL" ]
+lint.unfixable = [  ]

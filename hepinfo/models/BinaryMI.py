@@ -160,13 +160,13 @@ class BinaryMI(BaseModel):
 
         if sum(self.quantized_position) > 0:
             outputs = [self.out, self.last_quantized]
-            index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
+            self.index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
             loss = {
                 f"t_{len(self.hidden_layers)}": self.loss,
-                f"t_{index_qact}": mutual_information_bernoulli_loss
+                f"t_{self.index_qact}": mutual_information_bernoulli_loss
             }
-            lossWeights = {f"t_{len(self.hidden_layers)}": float(1 - self.gamma), f"t_{index_qact}": float(self.gamma)}
-            metrics = {f"t_{len(self.hidden_layers)}": 'AUC' if self.last_layer_size == 1 else 'acc', f"t_{index_qact}": 'acc'}
+            lossWeights = {f"t_{len(self.hidden_layers)}": float(1 - self.gamma), f"t_{self.index_qact}": float(self.gamma)}
+            metrics = {f"t_{len(self.hidden_layers)}": 'AUC' if self.last_layer_size == 1 else 'acc', f"t_{self.index_qact}": 'acc'}
         else:
             outputs = self.out
             loss = [self.loss]
@@ -183,6 +183,14 @@ class BinaryMI(BaseModel):
         if self.print_summary:
             self.model.summary() # type: ignore
             self._plot_model(self.model, "binaryMI.png")
+
+        # # convert to sequential
+        # seq_model = tf.keras.models.Sequential()
+        # for layer in self.model.layers:
+        #     if isinstance(layer, tf.keras.layers.Layer) and not isinstance(layer, tf.keras.layers.InputLayer):
+        #         seq_model.add(layer)
+        # self.model = seq_model
+        # self.model.summary()
 
         # setup learning rate schedule
         # TODO: maybe we have to go with a simple learning rate here for the experiments
@@ -252,9 +260,15 @@ class BinaryMI(BaseModel):
             callback.append(nan_terminate)
             callback.append(bops)
 
+        if sum(self.quantized_position) > 0:
+            y_train = {
+                f"t_{len(self.hidden_layers)}": y_train,
+                f"t_{self.index_qact}": s_train
+            }
+
         history = self.model.fit( # type: ignore
             x=x_train,
-            y=[y_train, s_train],
+            y=y_train,
             batch_size=self.batch_size,
             epochs=self.epoch,
             verbose=self.verbose,

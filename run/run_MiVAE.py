@@ -16,6 +16,7 @@ from sklearn.metrics import roc_auc_score
 
 import keras
 from tensorflow.keras import layers
+from squark.layers import QDense
 
 
 from functools import partial
@@ -45,8 +46,8 @@ X_test = scaler.transform(X_test)
 abnormal_data_train_scaled = scaler.transform(abnormal_data_train)
 abnormal_data_test_scaled = scaler.transform(abnormal_data_test)
 
-use_quantflow = True
-use_s_quark = False
+use_quantflow = False
+use_s_quark = True
 use_qkeras = False
 MiVAE_model = MiVAE(
     verbose=2,
@@ -59,13 +60,13 @@ MiVAE_model = MiVAE(
     batch_size=1024,
     beta_param=1,
     alpha=1, # can be also set to random to have random alphas for each layer
-    beta0=1e-5,
+    beta0=10,
     init_quantized_bits=16, # can be set to random to have random bit size for each value
     input_quantized_bits="quantized_bits(16, 6, 0)",
     quantized_bits="quantized_bits(16, 6, 0, use_stochastic_rounding=True)",
     quantized_activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)",
     drop_out=0.0,
-    epoch=100,
+    epoch=10,
     gamma=1,
     num_samples=10,
     hidden_layers=[32, 16],
@@ -78,6 +79,10 @@ MiVAE_model = MiVAE(
 )
 print("Fit gamma ", 0.1)
 history = MiVAE_model.fit(X_train, nPV_train)
+
+for layer in MiVAE_model.encoder.layers:
+    if hasattr(layer, "_beta"):
+        tf.print(layer._beta)
 
 # get data
 mean_abnormal_score = MiVAE_model.get_mean(abnormal_data_test_scaled).numpy()

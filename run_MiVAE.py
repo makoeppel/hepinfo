@@ -11,8 +11,8 @@ from hepinfo.models.MiVAE import MiVAE
 mplhep.style.use('CMS')
 
 # read in the data
-normal_data = np.load('../data/normal_data.npy', allow_pickle=True)
-abnormal_data = np.load('../data/abnormal_data.npy', allow_pickle=True)
+normal_data = np.load('./data/normal_data.npy', allow_pickle=True)
+abnormal_data = np.load('./data/abnormal_data.npy', allow_pickle=True)
 
 # perform some pre-processing and split into train test
 nPV = normal_data[:, 0]

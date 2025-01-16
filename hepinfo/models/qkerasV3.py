@@ -7,8 +7,7 @@ import warnings
 import keras
 import numpy as np
 import tensorflow as tf
-from keras import backend as K
-from keras.api import activations, constraints, initializers, regularizers
+from keras.api import activations, constraints, initializers, ops, regularizers
 from pyparsing import Group, Optional, Regex, Suppress, delimitedList
 
 
@@ -28,7 +27,7 @@ def _create_variable_name(attr_name, var_name=None):
     # This naming scheme is to solve a problem of a layer having more than
     # one quantizer can have multiple qnoise_factor variables with the same
     # name of "qnoise_factor".
-    return attr_name + '_' + str(K.get_uid(attr_name))
+    return attr_name + '_' + str(ops.get_uid(attr_name))
 
 
 class BaseQuantizer(tf.Module):
@@ -148,7 +147,7 @@ def _get_scaling_axis(scale_axis, len_axis):
         axis = list(range(scale_axis))
         axis += list(range(scale_axis + 1, len_axis))
     else:
-        if K.image_data_format() == 'channels_last':
+        if ops.image_data_format() == 'channels_last':
             axis = list(range(len_axis - 1))
         else:
             axis = list(range(1, len_axis))
@@ -185,22 +184,22 @@ def _get_scale(alpha, x, q, scale_axis=None, per_channel_scale=True):
 
         len_axis = len(x_shape)
         if not per_channel_scale:
-            qx = K.mean(x * q, keepdims=True)
-            qq = K.mean(q * q, keepdims=True)
+            qx = ops.mean(x * q, keepdims=True)
+            qq = ops.mean(q * q, keepdims=True)
         else:
             if len_axis > 1:
                 axis = _get_scaling_axis(scale_axis, len_axis)
-                qx = K.mean(tf.math.multiply(x, q), axis=axis, keepdims=True)
-                qq = K.mean(tf.math.multiply(q, q), axis=axis, keepdims=True)
+                qx = ops.mean(tf.math.multiply(x, q), axis=axis, keepdims=True)
+                qq = ops.mean(tf.math.multiply(q, q), axis=axis, keepdims=True)
             else:
                 # No summing (averaging) along the channel axis to get per-channel
                 # scales.
                 qx = x * q
                 qq = q * q
 
-        scale = qx / (qq + K.epsilon())
+        scale = qx / (qq + ops.epsilon())
         if alpha == 'auto_po2':
-            scale = K.pow(2.0, tf.math.round(K.log(scale + K.epsilon()) / np.log(2.0)))
+            scale = ops.power(2.0, tf.math.round(ops.log(scale + ops.epsilon()) / np.log(2.0)))
     elif alpha is None:
         scale = 1.0
     elif isinstance(alpha, np.ndarray):
@@ -217,7 +216,7 @@ _sigmoid = None
 def hard_sigmoid(x):
     """Computes hard_sigmoid function that saturates between 0 and 1."""
 
-    return K.clip(0.5 * x + 0.5, 0.0, 1.0)
+    return ops.clip(0.5 * x + 0.5, 0.0, 1.0)
 
 
 def smooth_sigmoid(x):
@@ -227,7 +226,7 @@ def smooth_sigmoid(x):
     # smaller than hard_simoid but the arithmetic for it is (x >> 3) +
     # (x >> 4) + 0.5, which is also not bad.
 
-    return K.clip(0.1875 * x + 0.5, 0.0, 1.0)
+    return ops.clip(0.1875 * x + 0.5, 0.0, 1.0)
 
 
 def set_internal_sigmoid(mode):
@@ -243,7 +242,7 @@ def set_internal_sigmoid(mode):
     elif mode == 'smooth':
         _sigmoid = smooth_sigmoid
     elif mode == 'real':
-        _sigmoid = keras.backend.sigmoid
+        _sigmoid = ops.sigmoid
 
 
 set_internal_sigmoid(_default_sigmoid_type)
@@ -351,21 +350,23 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
             self.build(var_name=self.var_name, use_variables=self.use_variables)
 
         non_sign_bits = self.bits - (self.negative_slope != 0.0)
-        x = K.cast(x, dtype='float32')
-        m = K.cast(K.pow(2, non_sign_bits), dtype='float32')
-        m_i = K.cast(K.pow(2, self.integer), dtype='float32')
+        x = ops.cast(x, dtype='float32')
+        m = ops.cast(ops.power(2, non_sign_bits), dtype='float32')
+        m_i = ops.cast(ops.power(2, self.integer), dtype='float32')
 
         # is_quantized_clip has precedence over relu_upper_bound for backward
         # compatibility.
-        m_f = K.cast(K.pow(tf.constant(2.0, tf.float32), K.cast(self.integer, dtype='float32') - non_sign_bits), dtype='float32')
+        m_f = ops.cast(
+            ops.power(tf.constant(2.0, tf.float32), ops.cast(self.integer, dtype='float32') - non_sign_bits), dtype='float32'
+        )
         if self.is_quantized_clip:
-            x_u = tf.where(x <= m_i - m_f, K.relu(x, alpha=self.negative_slope), tf.ones_like(x) * (m_i - m_f))
+            x_u = tf.where(x <= m_i - m_f, ops.relu(x, alpha=self.negative_slope), tf.ones_like(x) * (m_i - m_f))
         elif self.relu_upper_bound is not None:
             x_u = tf.where(
-                x <= self.relu_upper_bound, K.relu(x, alpha=self.negative_slope), tf.ones_like(x) * self.relu_upper_bound
+                x <= self.relu_upper_bound, ops.relu(x, alpha=self.negative_slope), tf.ones_like(x) * self.relu_upper_bound
             )
         else:
-            x_u = K.relu(x, alpha=self.negative_slope)
+            x_u = ops.relu(x, alpha=self.negative_slope)
 
         if self.use_sigmoid:
             p = _sigmoid(x / m_i) * m
@@ -408,7 +409,7 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
         unsigned_bits = self.bits - (self.negative_slope != 0.0)
 
         if unsigned_bits > 0:
-            return max(1.0, np.array(K.pow(2.0, K.cast(self.integer, dtype='float32')), dtype='float32'))
+            return max(1.0, np.array(ops.power(2.0, ops.cast(self.integer, dtype='float32')), dtype='float32'))
         else:
             return 1.0
 
@@ -419,7 +420,9 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
 
         unsigned_bits = self.bits - 1
         if unsigned_bits > 0:
-            return min(-0.0, -self.negative_slope * np.array(K.pow(2.0, K.cast(self.integer, dtype='float32')), dtype='float32'))
+            return min(
+                -0.0, -self.negative_slope * np.array(ops.power(2.0, ops.cast(self.integer, dtype='float32')), dtype='float32')
+            )
         else:
             return -1.0
 
@@ -431,7 +434,7 @@ class quantized_relu(BaseQuantizer):  # pylint: disable=invalid-name
         assert self.use_sigmoid == 0  # current unsupported
         assert self.negative_slope == 0  # # unsupported unsupported
         x = np.asarray(range(2**self.bits))
-        return x * np.array(K.pow(2.0, -self.bits + K.cast(self.integer, dtype='float32')), dtype='float32')
+        return x * np.array(ops.power(2.0, -self.bits + ops.cast(self.integer, dtype='float32')), dtype='float32')
 
     @classmethod
     def from_config(cls, config):
@@ -510,14 +513,14 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
             len_axis = len(x.shape)
 
             if len_axis > 1:
-                if K.image_data_format() == 'channels_last':
+                if ops.image_data_format() == 'channels_last':
                     axis = list(range(len_axis - 1))
                 else:
                     axis = list(range(1, len_axis))
             else:
                 axis = [0]
 
-            std = K.std(x, axis=axis, keepdims=True) + K.epsilon()
+            std = ops.std(x, axis=axis, keepdims=True) + ops.epsilon()
         else:
             std = 1.0
 
@@ -612,7 +615,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
 
     In general, we want to use a quantization function like:
 
-    a = (pow(2,bits) - 1 - 0) / (max(x) - min(x))
+    a = (power(2,bits) - 1 - 0) / (max(x) - min(x))
     b = -min(x) * a
 
     in the equation:
@@ -627,11 +630,11 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
     1) max(x) = +1, min(x) = -1
     2) max(x) = -min(x)
 
-    a = pow(2,bits-1)
+    a = power(2,bits-1)
     b = 0
 
     Finally, just remember that to represent the number with sign, the
-    largest representation is -pow(2,bits) to pow(2, bits-1)
+    largest representation is -power(2,bits) to power(2, bits-1)
 
     Symmetric and keep_negative allow us to generate numbers that are symmetric
     (same number of negative and positive representations), and numbers that
@@ -723,12 +726,12 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
         if not self.built:
             self.build(var_name=self.var_name, use_variables=self.use_variables)
 
-        x = K.cast_to_floatx(tf.convert_to_tensor(x))
+        x = ops.cast(tf.convert_to_tensor(x), dtype='float32')
 
         # quantized_bits with "1" bit becomes a binary implementation.
         unsigned_bits = self.bits - self.keep_negative
-        m = K.cast_to_floatx(pow(2, unsigned_bits))
-        m_i = K.cast_to_floatx(K.pow(2, self.integer))
+        m = ops.cast(ops.power(2, unsigned_bits), dtype='float32')
+        m_i = ops.cast(ops.power(2, self.integer), dtype='float32')
 
         if self.alpha is None:
             scale = 1.0
@@ -750,11 +753,11 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
             # using 2's complement.
             levels = (2 ** (self.bits - 1) - 1) * 2 if self.symmetric else (2**self.bits) - 1
 
-            scale = (K.max(abs(x), axis=axis, keepdims=True) * 2) / levels
+            scale = (ops.max(abs(x), axis=axis, keepdims=True) * 2) / levels
 
             # If alpha is "auto_po2", then get the "best" po2 scale
             if 'po2' in self.alpha:
-                scale = K.pow(2.0, tf.math.round(K.log(scale + K.epsilon()) / np.log(2.0)))
+                scale = ops.power(2.0, tf.math.round(ops.log(scale + ops.epsilon()) / np.log(2.0)))
                 for _ in range(5):
                     v = tf.floor(tf.abs(x) / scale + 0.5)
                     mask = v < levels / 2
@@ -836,7 +839,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
         """Get maximum value that quantized_bits class can represent."""
         unsigned_bits = self.bits - self.keep_negative
         if unsigned_bits > 0:
-            return max(1.0, np.array(K.pow(2.0, K.cast(self.integer, dtype='float32')), dtype='float32'))
+            return max(1.0, np.array(ops.power(2.0, ops.cast(self.integer, dtype='float32')), dtype='float32'))
         else:
             return 1.0
 
@@ -846,7 +849,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
             return 0.0
         unsigned_bits = self.bits - self.keep_negative
         if unsigned_bits > 0:
-            return -max(1.0, np.array(keras.ops.pow(2, keras.ops.cast(self.integer, dtype='float32')), dtype='float32'))
+            return -max(1.0, np.array(keras.ops.power(2, keras.ops.cast(self.integer, dtype='float32')), dtype='float32'))
         else:
             return -1.0
 
@@ -860,7 +863,7 @@ class quantized_bits(BaseQuantizer):  # pylint: disable=invalid-name
         x = np.asarray(range(2**self.bits), dtype=np.float32)
         p_and_n = np.where(x >= 2 ** (self.bits - 1), (x - 2 ** (self.bits - 1)) - 2 ** (self.bits - 1), x)
         return p_and_n * np.array(
-            keras.ops.pow(2.0, -self.bits + keras.ops.cast(self.integer, dtype='float32') + 1), dtype='float32'
+            keras.ops.power(2.0, -self.bits + keras.ops.cast(self.integer, dtype='float32') + 1), dtype='float32'
         )
 
     @classmethod
@@ -908,7 +911,7 @@ class Clip(keras.constraints.Constraint):
             w = self.constraint(w)
             if self.quantizer:
                 w = self.quantizer(w)
-        w = K.clip(w, self.min_value, self.max_value)
+        w = ops.clip(w, self.min_value, self.max_value)
         return w
 
     def get_config(self):
@@ -1274,13 +1277,13 @@ class QDense(keras.layers.Dense):
             quantized_kernel = self.kernel_quantizer_internal(self.kernel)
         else:
             quantized_kernel = self.kernel
-        output = K.dot(inputs, quantized_kernel)
+        output = ops.dot(inputs, quantized_kernel)
         if self.use_bias:
             if self.bias_quantizer:
                 quantized_bias = self.bias_quantizer_internal(self.bias)
             else:
                 quantized_bias = self.bias
-            output = K.bias_add(output, quantized_bias, data_format='channels_last')
+            output = ops.bias_add(output, quantized_bias, data_format='channels_last')
         if self.activation is not None:
             output = self.activation(output)
         return output
@@ -1359,22 +1362,20 @@ class quantized_sigmoid(BaseQuantizer):  # pylint: disable=invalid-name
         return 'quantized_sigmoid(' + ','.join(flags) + ')'
 
     def __call__(self, x):
-        x = K.cast_to_floatx(x)
-        m = K.cast_to_floatx(K.pow(2, self.bits))
+        x = ops.cast(x, 'float32')
+        m = ops.power(2.0, self.bits)
 
-        p = K.sigmoid(x) if self.use_real_sigmoid else _sigmoid(x)
+        p = ops.sigmoid(x) if self.use_real_sigmoid else _sigmoid(x)
 
-        return keras.backend.clip(
-            (_round_through(p * m, self.use_stochastic_rounding) / m), (1.0 * self.symmetric) / m, 1.0 - 1.0 / m
-        )
+        return ops.clip((_round_through(p * m, self.use_stochastic_rounding) / m), (1.0 * self.symmetric) / m, 1.0 - 1.0 / m)
 
     def max(self):
         """Get the maximum value that quantized_sigmoid can represent."""
-        return 1.0 - 1.0 / pow(2, self.bits)
+        return 1.0 - 1.0 / ops.power(2, self.bits)
 
     def min(self):
         """Get the minimum value that quantized_sigmoid can represent."""
-        return (1.0 * self.symmetric) / pow(2, self.bits)
+        return (1.0 * self.symmetric) / ops.power(2, self.bits)
 
     @classmethod
     def from_config(cls, config):

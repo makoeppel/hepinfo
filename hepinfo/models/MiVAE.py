@@ -30,7 +30,7 @@ class BernoulliSampling(keras.layers.Layer):
             )
             p = tf.cast(p, tf.float64)
         else:
-            p = keras.backend.sigmoid(self.temperature * inputs / self.std)
+            p = ops.sigmoid(self.temperature * inputs / self.std)
 
         # sample num_samples times from a bernoulli
         out = tf.zeros(tf.shape(inputs))
@@ -538,6 +538,7 @@ class MiVAE(BaseEstimator, keras.Model):
         self.compile(
             optimizer=self.optimizer(lr_schedule),
             run_eagerly=self.run_eagerly,
+            jit_compile=False,
         )
 
         callback = [keras.callbacks.EarlyStopping(monitor=self.monitor, mode='min', patience=self.patience)]

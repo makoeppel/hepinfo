@@ -5,6 +5,8 @@ from typing import Any
 from functools import partial
 
 import keras
+from keras.api.saving import register_keras_serializable
+
 import numpy as np
 from squark.utils.sugar import FreeEBOPs
 
@@ -118,6 +120,7 @@ class BinaryMI(BaseModel):
         self.out = Any
         self.gamma = gamma
 
+    @register_keras_serializable(package='Custom', name='mutual_information_bernoulli_loss')
     def  mutual_information_bernoulli_loss(self, y_true, y_pred):
         return mutual_information_bernoulli_loss(
             y_true, y_pred,

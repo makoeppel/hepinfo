@@ -16,7 +16,7 @@ from squark.config import QuantizerConfig
 from squark.layers import QDense as SQDense
 from squark.regularizers import MonoL1
 
-from hepinfo.models.qkerasV3 import QActivation, QDense
+from hepinfo.models.qkerasV3 import QActivation, QDense, BernoulliSampling
 from hepinfo.models.QuantFlow import TQActivation, TQDense
 
 
@@ -47,6 +47,9 @@ class BaseModel(BaseEstimator):
         alpha=1,
         beta0=1,
         drop_out: float = 0,
+        num_samples: int = 1,
+        use_quantized_sigmoid: bool = True,
+        bits_bernoulli_sigmoid: int = 8,
         # Common HPs
         batch_size: int = 200,
         learning_rate: float = 0.001,
@@ -77,6 +80,9 @@ class BaseModel(BaseEstimator):
         self.activation_binary = activation_binary
         self.activation_nonbinary = activation_nonbinary
         self.acitvation_last_layer = acitvation_last_layer
+        self.num_samples = num_samples
+        self.use_quantized_sigmoid = use_quantized_sigmoid
+        self.bits_bernoulli_sigmoid = bits_bernoulli_sigmoid
         self.kernel_regularizer = kernel_regularizer
         self.init_quantized_bits = init_quantized_bits
         self.input_quantized_bits = input_quantized_bits
@@ -254,9 +260,6 @@ class BaseModel(BaseEstimator):
             Any: output_layer
         """
 
-        # get the activation functions for the binary part
-        activation_binary = self._get_quantized_activation(self.activation_binary)
-
         if self.use_qkeras:
             hidden_layers = QActivation(self.input_quantized_bits)(input_layer)
         if self.use_quantflow:
@@ -329,9 +332,13 @@ class BaseModel(BaseEstimator):
                     )(hidden_layers)
             if self.quantized_position[i]:
                 last_quantized = hidden_layers
-                hidden_layers = QActivation(activation_binary, activity_regularizer=kernel_regularizer, name=f'qact_{name}_{i}')(
-                    hidden_layers
-                )
+                hidden_layers = BernoulliSampling(
+                    self.num_samples,
+                    use_quantized=self.use_quantized_sigmoid,
+                    bits_bernoulli_sigmoid=self.bits_bernoulli_sigmoid,
+                    name=f'qact_{name}_{i}',
+                )(hidden_layers)
+
             if drop_out > 0:
                 hidden_layers = keras.layers.Dropout(drop_out)(hidden_layers)
 

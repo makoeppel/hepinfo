@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 from keras.api import ops
 from keras.api.saving import register_keras_serializable
+from hepinfo.models.qkerasV3 import quantized_sigmoid
 
 
 def readFromAnomalyh5(inputfile, process, object_ranges='default1', moreInfo=None, verbosity=0):
@@ -180,7 +181,7 @@ def awkward_to_numpy(ak_array, maxN, verbosity=0):
 
 
 @register_keras_serializable(package='Custom', name='mutual_information_bernoulli_loss')
-def mutual_information_bernoulli_loss(y_true, y_pred):
+def mutual_information_bernoulli_loss(y_true, y_pred, use_quantized_sigmoid=False, bits_bernoulli_sigmoid=8):
     """
     I(x;y)  = H(x)   - H(x|y)
             = H(L_n) - H(L_n|s)
@@ -214,70 +215,79 @@ def mutual_information_bernoulli_loss(y_true, y_pred):
     :return: The loss
     """
 
-    def get_theta(x):
-        alpha = None
-        temperature = 6.0
-        use_real_sigmoid = True
-        # hard_sigmoid
-        _sigmoid = ops.clip(0.5 * x + 0.5, 0.0, 1.0)
-        if isinstance(alpha, str):
-            assert alpha in ['auto', 'auto_po2']
-
-        if isinstance(alpha, str):
-            len_axis = len(x.shape)
-
-            if len_axis > 1:
-                if keras.backend.image_data_format() == 'channels_last':
-                    axis = list(range(len_axis - 1))
-                else:
-                    axis = list(range(1, len_axis))
-            else:
-                axis = [0]
-
-            std = ops.std(x, axis=axis, keepdims=True) + keras.backend.epsilon()
-        else:
-            std = 1.0
-
-        if use_real_sigmoid:
-            p = ops.sigmoid(temperature * x / std)
-        else:
-            p = _sigmoid(temperature * x / std)
-
-        return p
-
-    def log2(x):
-        numerator = ops.log(x + 1e-20)
-        denominator = ops.log(tf.constant(2, dtype=numerator.dtype))
-        return numerator / denominator
-
     def get_h_bernoulli(tensor):
+        def get_theta(x):
+            alpha = None
+            temperature = 6.0
+            use_real_sigmoid = use_quantized_sigmoid
+            # quantized sigmoid
+            _sigmoid = quantized_sigmoid(bits=bits_bernoulli_sigmoid, use_stochastic_rounding=True, symmetric=True)
+            if isinstance(alpha, str):
+                assert alpha in ['auto', 'auto_po2']
+
+            if isinstance(alpha, str):
+                len_axis = len(x.shape)
+
+                if len_axis > 1:
+                    if keras.backend.image_data_format() == 'channels_last':
+                        axis = list(range(len_axis - 1))
+                    else:
+                        axis = list(range(1, len_axis))
+                else:
+                    axis = [0]
+
+                std = ops.std(x, axis=axis, keepdims=True) + keras.backend.epsilon()
+            else:
+                std = 1.0
+
+            if use_real_sigmoid:
+                p = ops.sigmoid(temperature * x / std)
+            else:
+                p = tf.cast(_sigmoid(temperature * x / std), tf.float64)
+
+            return p
+
+        def log2(x):
+            numerator = tf.math.log(x + 1e-20)
+            denominator = tf.math.log(tf.constant(2, dtype=numerator.dtype))
+            return numerator / denominator
+
         theta = tf.reduce_mean(get_theta(tensor), axis=0)
+
         return tf.reduce_sum(-(1 - theta) * log2(1 - theta) - theta * log2(theta))
 
-    y_true = ops.cast(y_true, 'int32')
-    y_pred = ops.cast(y_pred, 'float64')
-    num_classes = 2
-    H_L_n = get_h_bernoulli(y_pred)
-    H_L_n_s = []
-    norm_s = []
-    for i in range(num_classes):
-        if ops.shape(y_true).shape[0] == 1:
-            y_filter = ops.where(y_true == i)
+    def compute_for_value(value, y_true, y_pred, get_h_bernoulli):
+        if tf.shape(y_true).shape[0] == 1:
+            y_filter = tf.where(y_true == value)
         else:
-            y_filter = ops.where(y_true[:, 0] == i)[:, 0]
+            y_filter = tf.where(y_true[:, 0] == value)[:, 0]
 
         y_i = tf.gather(y_pred, indices=y_filter)
         H_L_n_si = get_h_bernoulli(y_i)
-        H_L_n_s.append(H_L_n_si)
-        cnt_i = ops.shape(y_i)[0] + ops.cast(1e-16, dtype='int32')  # number of repr with index i
-        norm_si = cnt_i / ops.shape(y_pred)[0]
-        norm_s.append(norm_si)
+        cnt_i = tf.shape(y_i)[0] + tf.cast(1e-16, dtype=tf.int32)  # number of repr with index i
+        norm_si = cnt_i / tf.shape(y_pred)[0]
+        return H_L_n_si, norm_si
 
-    norm_s = ops.convert_to_tensor(norm_s)
+    y_true = tf.cast(y_true, tf.int32)
+    y_pred = tf.cast(y_pred, tf.float64)
+    H_L_n = get_h_bernoulli(y_pred)
 
-    H_L_n_s = ops.convert_to_tensor(H_L_n_s)
-    MI = H_L_n - ops.sum(ops.multiply(norm_s, H_L_n_s))
+    unique_y_true, _ = tf.unique(y_true)
+
+    H_L_n_s = []
+    norm_s = []
+
+    def compute_per_value(v):
+        return compute_for_value(v, y_true, y_pred, get_h_bernoulli)
+
+    results = tf.map_fn(compute_per_value, unique_y_true, fn_output_signature=(tf.float64, tf.float64))
+
+    H_L_n_s = tf.convert_to_tensor(results[0])
+    norm_s = tf.convert_to_tensor(results[1])
+
+    MI = H_L_n - tf.reduce_sum(tf.math.multiply(norm_s, H_L_n_s))
 
     # NOTE: this is a hotfix when we dont have all classes
-    MI = ops.where(ops.isnan(MI), ops.convert_to_tensor([0.0], dtype='float64'), MI)
-    return MI
+    MI = tf.where(tf.math.is_nan(MI), tf.convert_to_tensor([0.0], dtype=tf.float64), MI)
+
+    return tf.cast(MI, dtype=tf.float32)

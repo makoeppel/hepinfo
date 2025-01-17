@@ -4,10 +4,12 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
 from hepinfo.models.BinaryMI import BinaryMI
+from sklearn.preprocessing import MinMaxScaler
+
 
 # read in the data
-normal_data = np.load('../data/normal_data.npy', allow_pickle=True)
-abnormal_data = np.load('../data/abnormal_data.npy', allow_pickle=True)
+normal_data = np.load('./data/normal_data.npy', allow_pickle=True)
+abnormal_data = np.load('./data/abnormal_data.npy', allow_pickle=True)
 nPV_normal = normal_data[:, 0]
 nPV_abnormal = abnormal_data[:, 0]
 normal_data = normal_data[:, 1:]
@@ -18,17 +20,23 @@ X = np.concatenate((abnormal_data, normal_data))
 S = np.concatenate((nPV_abnormal, nPV_normal))
 
 X_train, X_test, y_train, y_test, S_train, S_test = train_test_split(X, y, S, random_state=42)
+scaler = MinMaxScaler()  # add robast scaler
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
 
 # train the transfer model
-use_quantflow = False
+use_quantflow = True
 use_s_quark = False
-use_qkeras = True
+use_qkeras = False
 BMI = BinaryMI(
     kernel_regularizer=0.01,
-    batch_size=32,
+    batch_size=1024,
     hidden_layers=[64, 32, 16],
     quantized_position=[False, True, False],
     validation_size=0.1,
+    num_samples=10,
+    use_quantized_sigmoid=False,
+    bits_bernoulli_sigmoid=8,
     use_quantflow=use_quantflow,
     use_s_quark=use_s_quark,
     use_qkeras=use_qkeras,
@@ -38,13 +46,13 @@ BMI = BinaryMI(
     quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
     alpha=1e-6,
     beta0=1e-5,
-    epoch=1,
+    epoch=10,
     input_shape=(X_train.shape[1],),
     verbose=2,
     learning_rate_decay_rate=0.001,
-    gamma=0.3,
+    gamma=1,
     print_summary=True,
-    last_layer_size=2,
+    last_layer_size=1,
     run_eagerly=False,
 )
 history = BMI.fit(x_train=X_train, y_train=y_train, s_train=S_train)
@@ -57,7 +65,7 @@ if use_qkeras:
 if not use_qkeras and not use_quantflow and not use_s_quark:
     BMI.model.save('binaryMI_full.keras')
 
-y_pred = BMI.predict_proba(X_test)[:, 1]
+y_pred = BMI.predict_proba(X_test)
 auc_value = roc_auc_score(y_test, y_pred)
 print(auc_value)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 from typing import Any
+from functools import partial
 
 import keras
 import numpy as np
@@ -40,6 +41,9 @@ class BinaryMI(BaseModel):
         quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
         alpha=1,
         beta0=1,
+        num_samples=1,
+        use_quantized_sigmoid=True,
+        bits_bernoulli_sigmoid=8,
         # Common HPs
         batch_size: int = 200,
         learning_rate: float = 0.001,
@@ -53,7 +57,7 @@ class BinaryMI(BaseModel):
         verbose: int = 0,
         validation_size: float = 0.1,
         input_shape: tuple | int = 0,
-        last_layer_size: int = 2,
+        last_layer_size: int = 1,
         random_seed: int = 42,
         name: str = 'BinaryMI',
         dataset_name: str = 'Mnist',
@@ -83,6 +87,9 @@ class BinaryMI(BaseModel):
             quantized_activation=quantized_activation,
             alpha=alpha,
             beta0=beta0,
+            num_samples=num_samples,
+            use_quantized_sigmoid=use_quantized_sigmoid,
+            bits_bernoulli_sigmoid=bits_bernoulli_sigmoid,
             # Common HPs
             batch_size=batch_size,
             learning_rate=learning_rate,
@@ -110,6 +117,13 @@ class BinaryMI(BaseModel):
         self.x_input = Any
         self.out = Any
         self.gamma = gamma
+
+    def  mutual_information_bernoulli_loss(self, y_true, y_pred):
+        return mutual_information_bernoulli_loss(
+            y_true, y_pred,
+            use_quantized_sigmoid=self.use_quantized_sigmoid,
+            bits_bernoulli_sigmoid=self.bits_bernoulli_sigmoid
+        )
 
     def _build_model(self) -> None:
         r"""
@@ -158,8 +172,8 @@ class BinaryMI(BaseModel):
         if sum(self.quantized_position) > 0:
             outputs = [self.out, self.last_quantized]
             self.index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
-            loss = {f't_{len(self.hidden_layers)}': self.loss, f't_{self.index_qact}': mutual_information_bernoulli_loss}
-            lossWeights = {f't_{len(self.hidden_layers)}': float(1 - self.gamma), f't_{self.index_qact}': float(self.gamma)}
+            loss = {f't_{len(self.hidden_layers)}': self.loss, f't_{self.index_qact}': self.mutual_information_bernoulli_loss}
+            lossWeights = {f't_{len(self.hidden_layers)}': 1, f't_{self.index_qact}': float(self.gamma)}
             metrics = {
                 f't_{len(self.hidden_layers)}': 'AUC' if self.last_layer_size == 1 else 'acc',
                 f't_{self.index_qact}': 'acc',
@@ -175,15 +189,6 @@ class BinaryMI(BaseModel):
 
         if self.print_summary:
             self.model.summary()  # type: ignore
-            self._plot_model(self.model, 'binaryMI.png')
-
-        # # convert to sequential
-        # seq_model = keras.models.Sequential()
-        # for layer in self.model.layers:
-        #     if isinstance(layer, keras.layers.Layer) and not isinstance(layer, keras.layers.InputLayer):
-        #         seq_model.add(layer)
-        # self.model = seq_model
-        # self.model.summary()
 
         # setup learning rate schedule
         # TODO: maybe we have to go with a simple learning rate here for the experiments
@@ -233,7 +238,8 @@ class BinaryMI(BaseModel):
         self.input_shape = (x_train.shape[1],)
 
         # convert for classifier output
-        y_train = keras.utils.to_categorical(y_train, self.last_layer_size)
+        if self.last_layer_size > 1:
+            y_train = keras.utils.to_categorical(y_train, self.last_layer_size)
 
         self._build_model()
 

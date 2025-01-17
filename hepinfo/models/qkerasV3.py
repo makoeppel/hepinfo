@@ -479,7 +479,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
       gradient.
     """
 
-    def __init__(self, alpha=None, temperature=6.0, use_real_sigmoid=True):
+    def __init__(self, alpha=None, temperature=6.0, use_real_sigmoid=True, thr=None):
         super().__init__()
         self.alpha = alpha
         self.bits = 1
@@ -487,6 +487,10 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
         self.use_real_sigmoid = use_real_sigmoid
         self.default_alpha = 1.0
         self.scale = None
+        if thr is not None:
+            self.thr = tf.Variable(tf.ones([1]) * thr, trainable=True, dtype=tf.float32)
+        else:
+            self.thr = None
 
     def __str__(self):
         flags = []
@@ -501,7 +505,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
             flags.append('use_real_sigmoid=' + str(int(self.use_real_sigmoid)))
         return 'bernoulli(' + ','.join(flags) + ')'
 
-    def __call__(self, x):
+    def __call__(self, x, training=True):
         if isinstance(self.alpha, str):
             assert self.alpha in ['auto', 'auto_po2']
 
@@ -524,10 +528,14 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
             p = keras.backend.sigmoid(self.temperature * x / std)
         else:
             p = _sigmoid(self.temperature * x / std)
-        r = tf.random.uniform(tf.shape(x))
-        q = tf.sign(p - r)
-        q += 1.0 - tf.abs(q)
-        q = (q + 1.0) / 2.0
+
+        if training or self.thr is None:
+            r = tf.random.uniform(tf.shape(x))
+            q = tf.sign(p - r)
+            q += 1.0 - tf.abs(q)
+            q = (q + 1.0) / 2.0
+        else:
+            q = tf.where(p >= self.thr, tf.ones_like(p), tf.zeros_like(p))
 
         q_non_stochastic = tf.sign(x)
         q_non_stochastic += 1.0 - tf.abs(q_non_stochastic)
@@ -559,9 +567,67 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
         return cls(**config)
 
     def get_config(self):
-        config = {'alpha': self.alpha}
+        config = {'alpha': self.alpha, 'thr': self.thr.numpy().tolist() if self.thr is not None else None}
         return config
 
+
+
+class BernoulliSampling(keras.layers.Layer):
+    def __init__(self, num_samples, name=None, std=1, thr=0.5, temperature=6.0, use_quantized=False, bits_bernoulli_sigmoid=8, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.num_samples = num_samples
+        self.std = std
+        self.temperature = temperature
+        self.use_quantized = use_quantized
+        self.bits_bernoulli_sigmoid = bits_bernoulli_sigmoid
+        if thr is not None:
+            self.thr = tf.Variable(tf.ones([1]) * thr, trainable=False, dtype=tf.float32)
+        else:
+            self.thr = None
+
+    def call(self, inputs, training=True):
+        # convert inputs to sigmoid to get probablity for bernoulli
+        if self.use_quantized:
+            p = quantized_sigmoid(bits=self.bits_bernoulli_sigmoid, use_stochastic_rounding=True, symmetric=True)(
+                self.temperature * inputs / self.std
+            )
+            p = tf.cast(p, tf.float32)
+        else:
+            p = ops.sigmoid(self.temperature * inputs / self.std)
+
+        # sample num_samples times from a bernoulli
+        out = tf.zeros(tf.shape(inputs))
+        if training:
+            for _ in range(self.num_samples):
+                r = tf.random.uniform(tf.shape(inputs))
+                q = tf.sign(p - r)
+                q += 1.0 - tf.abs(q)
+                q = (q + 1.0) / 2.0
+                out += q
+            out = out / self.num_samples
+        else:
+            out = tf.where(p >= self.thr, tf.ones_like(p), tf.zeros_like(p))
+
+        # output is mean of stochastic sampling with straight through gradient
+        out = inputs + tf.stop_gradient(-inputs + out)
+
+        return out
+
+    def max(self):
+        """Get the maximum value bernoulli class can represent."""
+        return 1.0
+
+    def min(self):
+        """Get the minimum value bernoulli class can represent."""
+        return 0.0
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
+    def get_config(self):
+        config = {'thr': self.thr.numpy().tolist() if self.thr is not None else None}
+        return config
 
 class QActivation(keras.layers.Layer):
     """Implements quantized activation layers."""

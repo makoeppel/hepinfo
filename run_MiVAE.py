@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 
 from hepinfo.models.MiVAE import MiVAE
+from hepinfo.models.qkerasV3 import BernoulliSampling
 
 mplhep.style.use('CMS')
 
@@ -31,9 +32,10 @@ X_test = scaler.transform(X_test)
 abnormal_data_train_scaled = scaler.transform(abnormal_data_train)
 abnormal_data_test_scaled = scaler.transform(abnormal_data_test)
 
-use_quantflow = False
-use_s_quark = True
+use_quantflow = True
+use_s_quark = False
 use_qkeras = False
+gamma = 1
 MiVAE_model = MiVAE(
     verbose=2,
     activation='tanh',
@@ -51,9 +53,9 @@ MiVAE_model = MiVAE(
     quantized_bits='quantized_bits(16, 6, 0, use_stochastic_rounding=True)',
     quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
     drop_out=0.0,
-    epoch=50,
-    gamma=1,
-    num_samples=10,
+    epoch=10,
+    gamma=gamma,
+    num_samples=1,
     hidden_layers=[32, 16],
     latent_dims=8,
     learning_rate=0.001,
@@ -62,24 +64,33 @@ MiVAE_model = MiVAE(
     mi_loss=True,
     run_eagerly=False,
 )
-print('Fit gamma ', 0.1)
+print('Fit gamma ', gamma)
 history = MiVAE_model.fit(X_train, nPV_train)
 
 for layer in MiVAE_model.encoder.layers:
     if hasattr(layer, '_beta'):
         tf.print(layer._beta)
 
-# get data
-mean_abnormal_score = MiVAE_model.get_mean(abnormal_data_test_scaled).numpy()
-mean_abnormal_score = np.sum(mean_abnormal_score**2, axis=1)
-mean_normal_score = MiVAE_model.get_mean(X_test).numpy()
-mean_normal_score = np.sum(mean_normal_score**2, axis=1)
+for i in range(10):
+    for layer in MiVAE_model.encoder.layers:
+        if isinstance(layer, BernoulliSampling):
+            print("thr values:", layer.thr.numpy())  # Should print an array of 0.5 values
 
-# generate plots for the ROC curves
-y_test = np.concatenate((np.ones(len(mean_abnormal_score)), np.zeros(len(mean_normal_score))))
-fpr, tpr, thresholds = roc_curve(y_test, np.concatenate((mean_abnormal_score, mean_normal_score)))
-auc_value = auc(fpr, tpr)
-print(auc_value)
+    # get data
+    mean_abnormal_score = MiVAE_model.get_mean(abnormal_data_test_scaled).numpy()
+    mean_abnormal_score = np.sum(mean_abnormal_score**2, axis=1)
+    mean_normal_score = MiVAE_model.get_mean(X_test).numpy()
+    mean_normal_score = np.sum(mean_normal_score**2, axis=1)
+
+    # generate plots for the ROC curves
+    y_test = np.concatenate((np.ones(len(mean_abnormal_score)), np.zeros(len(mean_normal_score))))
+    fpr, tpr, thresholds = roc_curve(y_test, np.concatenate((mean_abnormal_score, mean_normal_score)))
+    auc_value = auc(fpr, tpr)
+    print(auc_value)
+
+    for layer in MiVAE_model.encoder.layers:
+        if isinstance(layer, BernoulliSampling):
+            layer.thr.assign((i/10,)) 
 
 if use_quantflow:
     plt.plot(history.history['bops'], '.')

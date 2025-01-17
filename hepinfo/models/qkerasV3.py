@@ -1091,6 +1091,34 @@ def get_constraint(identifier, quantizer):
         max_value = max(1, quantizer.max()) if hasattr(quantizer, 'max') else 1.0
         return Clip(-max_value, max_value, identifier, quantizer)
 
+def _need_exponent_sign_bit_check(max_value):
+  """Checks whether the sign bit of exponent is needed.
+
+  This is used by quantized_po2 and quantized_relu_po2.
+
+  Args:
+    max_value: the maximum value allowed.
+
+  Returns:
+    An integer. 1: sign_bit is needed. 0: sign_bit is not needed.
+  """
+
+  if max_value is not None:
+    if max_value < 0:
+      raise ValueError("po2 max_value should be non-negative.")
+    if max_value > 1:
+      # if max_value is larger than 1,
+      #   the exponent could be positive and negative.
+      #   e.g., log(max_value) > 0 when max_value > 1
+      need_exponent_sign_bit = 1
+    else:
+      need_exponent_sign_bit = 0
+  else:
+    # max_value is not specified, so we cannot decide the range.
+    # Then we need to put sign_bit for exponent to be safe
+    need_exponent_sign_bit = 1
+  return need_exponent_sign_bit
+
 
 def get_auto_range_constraint_initializer(quantizer, constraint, initializer):
     """Get value range automatically for quantizer.
@@ -1224,6 +1252,100 @@ def safe_eval(eval_str, op_dict, *params, **kwparams):  # pylint: disable=invali
             return quantizer
 
 
+def _clip_power_of_two(x_abs,
+                       min_exp,
+                       max_exp,
+                       max_value,
+                       quadratic_approximation=False,
+                       use_stochastic_rounding=False,
+                       log2_rounding="rnd"):
+  """Clips a tensor using power-of-two quantizer.
+
+
+  Args:
+    x_abs: A tensor object. Its elements should be non-negative.
+    min_exp: An integer representing the smallest exponent.
+    max_exp: An integer representing the largest exponent.
+    max_value: A float or None. If it is None, we clip the value to max_value.
+    quadratic_approximation: An boolean representing whether the quadratic
+      approximation is applied.
+    use_stochastic_rounding: An boolean representing whether the stochastic
+      rounding method is applied.
+    log2_rounding: log2 rounding mode. "rnd" and "floor" currently
+      supported, corresponding to tf.round and tf.floor respectively.
+
+  Returns:
+    A tensor object, the values are clipped by min_exp and max_exp.
+  """
+
+  # if quadratic_approximation is True, round to the exponent for sqrt(x),
+  # so that the return value can be divided by two without remainder.
+  log2 = np.log(2.0)
+
+  # When the elements of x_abs are small than the keras epsilon,
+  # we just overwrite x_abs with eps
+  eps = tf.keras.backend.epsilon()
+  x_filter = tf.where(x_abs < eps, eps, x_abs)
+  if max_value is not None:
+    # If the elements of x_filter has value larger than x_value, clip it.
+    x_filter = tf.where(x_filter >= max_value,
+                        tf.ones_like(x_filter) * max_value, x_filter)
+
+  def power_of_two_clip(x_abs, min_exp, max_exp, quadratic_approximation,
+                        use_stochastic_rounding, log2_rounding):
+    assert log2_rounding in ["rnd", "floor"]
+
+    if quadratic_approximation:
+      q_factor = 2.0
+      x_input = tf.sqrt(x_abs)
+    else:
+      q_factor = 1.0
+      x_input = x_abs
+
+    if log2_rounding == "floor":
+      x_log2 = _floor_through(tf.keras.backend.log(x_input) / log2)
+    elif use_stochastic_rounding:
+      x_log2 = tf_utils.smart_cond(
+          K.learning_phase(),
+          lambda: stochastic_round_po2(x_input),
+          lambda: _round_through(tf.keras.backend.log(x_input) / log2))
+    else:
+      x_log2 = _round_through(tf.keras.backend.log(x_input) / log2)
+
+    x_clipped = q_factor * tf.keras.backend.clip(x_log2, min_exp, max_exp)
+    return x_clipped
+
+  x_clipped = tf.where(
+      x_abs < eps,
+      tf.ones_like(x_abs) * min_exp,
+      power_of_two_clip(x_filter, min_exp, max_exp, quadratic_approximation,
+                        use_stochastic_rounding, log2_rounding))
+
+  return x_clipped
+
+
+def _get_min_max_exponents(non_sign_bits, need_exponent_sign_bit,
+                           quadratic_approximation):
+  """Given a bitwidth, gets min and max exponents that it can represent.
+
+  Args:
+    non_sign_bits: An integer representing the bitwidth of the exponent.
+    need_exponent_sign_bit: An integer representing whether it needs sign bit
+      in exponent. (1: need sign bit. 0: sign bit is not needed.)
+    quadratic_approximation: A boolean representing whether the quadratic
+      approximiation method is enforced.
+
+  Returns:
+    A tuple of integers: min_exp, max_exp
+  """
+  effect_bits = non_sign_bits - need_exponent_sign_bit
+  min_exp = -2**(effect_bits)
+  max_exp = 2**(effect_bits) - 1
+  if quadratic_approximation:
+    max_exp = 2 * (max_exp // 2)
+  return min_exp, max_exp
+
+
 def get_quantizer(identifier):
     """Gets the quantizer.
 
@@ -1251,6 +1373,142 @@ def get_quantizer(identifier):
         return identifier
     else:
         raise ValueError('Could not interpret quantizer identifier: ' + str(identifier))
+
+
+class quantized_po2(BaseQuantizer):  # pylint: disable=invalid-name
+  """Quantizes to the closest power of 2.
+
+  Attributes:
+    bits: An integer, the bits allocated for the exponent, its sign and the sign
+      of x.
+    max_value: An float or None. If None, no max_value is specified.
+      Otherwise, the maximum value of quantized_po2 <= max_value
+    use_stochastic_rounding: A boolean, default is False, if True, it uses
+      stochastic rounding and forces the mean of x to be x statstically.
+    quadratic_approximation: A boolean, default is False if True, it forces the
+      exponent to be even number that closted to x.
+    log2_rounding: A string, log2 rounding mode. "rnd" and "floor" currently
+      supported, corresponding to tf.round and tf.floor respectively.
+    qnoise_factor: float. a scalar from 0 to 1 that represents the level of
+      quantization noise to add. This controls the amount of the quantization
+      noise to add to the outputs by changing the weighted sum of
+      (1 - qnoise_factor)*unquantized_x + qnoise_factor*quantized_x.
+    var_name: String or None. A variable name shared between the tf.Variables
+      created in the build function. If None, it is generated automatically.
+    use_ste: Bool. Whether to use "straight-through estimator" (STE) method or
+        not.
+    use_variables: Bool. Whether to make the quantizer variables to be dynamic
+      tf.Variables or not.
+  """
+
+  def __init__(self,
+               bits=8,
+               max_value=None,
+               use_stochastic_rounding=False,
+               quadratic_approximation=False,
+               log2_rounding="rnd",
+               qnoise_factor=1.0,
+               var_name=None,
+               use_ste=True,
+               use_variables=False):
+    super().__init__()
+    self.bits = bits
+    self.max_value = max_value
+    self.use_stochastic_rounding = use_stochastic_rounding
+    self.log2_rounding = log2_rounding
+    # if True, round to the exponent for sqrt(x),
+    # so that the return value can be divided by two without remainder.
+    self.quadratic_approximation = quadratic_approximation
+    need_exponent_sign_bit = _need_exponent_sign_bit_check(self.max_value)
+    non_sign_bits = self.bits - 1
+    self._min_exp, self._max_exp = _get_min_max_exponents(
+        non_sign_bits, need_exponent_sign_bit, self.quadratic_approximation)
+    # qnoise_factor related attributes
+    self.qnoise_factor = qnoise_factor
+    self.use_ste = use_ste
+    self.var_name = var_name
+    self.use_variables = use_variables
+
+  def __str__(self):
+    flags = [str(self.bits)]
+    if self.max_value is not None or self.use_stochastic_rounding:
+      flags.append(str(int(self.max_value)))
+    if self.use_stochastic_rounding:
+      flags.append(str(int(self.use_stochastic_rounding)))
+    if self.quadratic_approximation:
+      flags.append(
+          "quadratic_approximation=" + str(int(self.quadratic_approximation)))
+    return "quantized_po2(" + ",".join(flags) + ")"
+
+  def __call__(self, x):
+    if not self.built:
+      self.build(var_name=self.var_name, use_variables=self.use_variables)
+
+    x_sign = tf.sign(x)
+    x_sign += (1.0 - tf.abs(x_sign))
+    x_abs = tf.abs(x)
+    x_clipped = _clip_power_of_two(x_abs, self._min_exp, self._max_exp,
+                                   self.max_value,
+                                   self.quadratic_approximation,
+                                   self.use_stochastic_rounding,
+                                   self.log2_rounding)
+    xq = x_sign * pow(2.0, x_clipped)
+
+    if self.use_ste:
+      return x + tf.stop_gradient(self.qnoise_factor * (-x + xq))
+    else:
+      return (1 - self.qnoise_factor) * x + tf.stop_gradient(
+          self.qnoise_factor * xq)
+
+  def max(self):
+    """Get the maximum value that quantized_po2 can represent."""
+    if self.max_value:
+      return max(1.0, self.max_value)
+    else:
+      return max(1.0, 2**self._max_exp)
+
+  def min(self):
+    """Get the minimum value that quantized_po2 can represent."""
+    if self.max_value:
+      return -max(1.0, self.max_value)
+    else:
+      return -max(1.0, 2**self._max_exp)
+
+  @classmethod
+  def from_config(cls, config):
+    return cls(**config)
+
+  def get_config(self):
+    """Gets configugration of the quantizer.
+
+    Returns:
+      A dict mapping quantization configuration, including
+        bits: bitwidth for exponents.
+        max_value: the maximum value of this quantized_po2 can represent.
+        use_stochastic_rounding:
+          if True, stochastic rounding is used.
+        quadratic_approximation:
+          if True, the exponent is enforced to be even number, which is
+          the closest one to x.
+        log2_rounding:
+          A string, Log2 rounding mode
+    """
+    config = {
+        "bits":
+            self.bits,
+        "max_value":
+            self.max_value,
+        "use_stochastic_rounding":
+            self.use_stochastic_rounding,
+        "quadratic_approximation":
+            self.quadratic_approximation,
+        "qnoise_factor":
+            self.qnoise_factor.numpy() if isinstance(
+                self.qnoise_factor, tf.Variable) else self.qnoise_factor,
+        "log2_rounding":
+            self.log2_rounding
+    }
+    return config
 
 
 class QDense(keras.layers.Dense):

@@ -12,7 +12,7 @@ from squark.utils.sugar import FreeEBOPs
 
 from hepinfo.models.BaseModel import BaseModel
 from hepinfo.models.QuantFlow import FreeBOPs
-from hepinfo.util import mutual_information_bernoulli_loss
+from hepinfo.util import MILoss
 
 
 class BinaryMI(BaseModel):
@@ -120,14 +120,6 @@ class BinaryMI(BaseModel):
         self.out = Any
         self.gamma = gamma
 
-    @register_keras_serializable(package='Custom', name='mutual_information_bernoulli_loss')
-    def  mutual_information_bernoulli_loss(self, y_true, y_pred):
-        return mutual_information_bernoulli_loss(
-            y_true, y_pred,
-            use_quantized_sigmoid=self.use_quantized_sigmoid,
-            bits_bernoulli_sigmoid=self.bits_bernoulli_sigmoid
-        )
-
     def _build_model(self) -> None:
         r"""
         Is building the model by sequential adding layers.
@@ -175,7 +167,7 @@ class BinaryMI(BaseModel):
         if sum(self.quantized_position) > 0:
             outputs = [self.out, self.last_quantized]
             self.index_qact = [i for i, x in enumerate(self.quantized_position) if x][-1]
-            loss = {f't_{len(self.hidden_layers)}': self.loss, f't_{self.index_qact}': self.mutual_information_bernoulli_loss}
+            loss = {f't_{len(self.hidden_layers)}': self.loss, f't_{self.index_qact}': MILoss(self.use_quantized_sigmoid, self.bits_bernoulli_sigmoid)}
             lossWeights = {f't_{len(self.hidden_layers)}': 1, f't_{self.index_qact}': float(self.gamma)}
             metrics = {
                 f't_{len(self.hidden_layers)}': 'AUC' if self.last_layer_size == 1 else 'acc',

@@ -180,7 +180,6 @@ def awkward_to_numpy(ak_array, maxN, verbosity=0):
     return np_arr.reshape(np_arr.shape[0], np_arr.shape[1] * np_arr.shape[2])
 
 
-@register_keras_serializable(package='Custom', name='mutual_information_bernoulli_loss')
 def mutual_information_bernoulli_loss(y_true, y_pred, use_quantized_sigmoid=False, bits_bernoulli_sigmoid=8):
     """
     I(x;y)  = H(x)   - H(x|y)
@@ -291,3 +290,21 @@ def mutual_information_bernoulli_loss(y_true, y_pred, use_quantized_sigmoid=Fals
     MI = tf.where(tf.math.is_nan(MI), tf.convert_to_tensor([0.0], dtype=tf.float64), MI)
 
     return tf.cast(MI, dtype=tf.float32)
+
+
+class MILoss(keras.losses.Loss):
+    def __init__(self, use_quantized_sigmoid=False, bits_bernoulli_sigmoid=8, name="mi_loss", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.use_quantized_sigmoid = use_quantized_sigmoid
+        self.bits_bernoulli_sigmoid = bits_bernoulli_sigmoid
+
+    def call(self, y_true, y_pred):
+        return mutual_information_bernoulli_loss(
+            y_true,
+            y_pred,
+            self.use_quantized_sigmoid,
+            self.bits_bernoulli_sigmoid
+        )
+
+    def get_config(self):
+        return super().get_config()

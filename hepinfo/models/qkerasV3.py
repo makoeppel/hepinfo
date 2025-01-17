@@ -573,7 +573,7 @@ class bernoulli(BaseQuantizer):  # pylint: disable=invalid-name
 
 
 class BernoulliSampling(keras.layers.Layer):
-    def __init__(self, num_samples, name=None, std=1, thr=0.5, temperature=6.0, use_quantized=False, bits_bernoulli_sigmoid=8, **kwargs):
+    def __init__(self, num_samples=1, name=None, std=1, thr=0.5, temperature=6.0, use_quantized=False, bits_bernoulli_sigmoid=8, **kwargs):
         super().__init__(name=name, **kwargs)
         self.num_samples = num_samples
         self.std = std
@@ -626,7 +626,7 @@ class BernoulliSampling(keras.layers.Layer):
         return cls(**config)
 
     def get_config(self):
-        config = {'thr': self.thr.numpy().tolist() if self.thr is not None else None}
+        config = {'num_samples': self.num_samples, 'thr': self.thr.numpy().tolist() if self.thr is not None else None}
         return config
 
 class QActivation(keras.layers.Layer):

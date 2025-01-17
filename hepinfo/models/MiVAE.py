@@ -1,53 +1,42 @@
-import six
+import keras
 import numpy as np
-
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-
-from keras import ops
-from keras.regularizers import L2
-
-from hepinfo.models.qkerasV3 import QDense, QActivation, quantized_sigmoid
-from hepinfo.models.QuantFlow import TQDense, TQActivation, FreeBOPs
-
+from keras.api import layers, ops
+from keras.api.regularizers import L2
 from sklearn.base import BaseEstimator
-
-from squark.regularizers import MonoL1
-from squark.config import QuantizerConfig, QuantizerConfigScope
+from squark.config import QuantizerConfigScope, global_config
 from squark.layers import QDense as SQDense
 from squark.utils.sugar import FreeEBOPs
 
+from hepinfo.models.qkerasV3 import QActivation, QDense, quantized_sigmoid
+from hepinfo.models.QuantFlow import TQActivation, TQDense
 
-class BernoulliSampling(tf.keras.layers.Layer):
 
+class BernoulliSampling(keras.layers.Layer):
     def __init__(self, num_samples, name=None, std=1, temperature=6.0, use_quantized=False, bits_bernoulli_sigmoid=8, **kwargs):
         super().__init__(name=name, **kwargs)
         self.num_samples = num_samples
         self.std = std
         self.temperature = temperature
-        self.use_quantized=use_quantized
-        self.bits_bernoulli_sigmoid=bits_bernoulli_sigmoid
+        self.use_quantized = use_quantized
+        self.bits_bernoulli_sigmoid = bits_bernoulli_sigmoid
 
     def call(self, inputs):
-
         # convert inputs to sigmoid to get probablity for bernoulli
         if self.use_quantized:
-            p = quantized_sigmoid(
-                bits=self.bits_bernoulli_sigmoid,
-                use_stochastic_rounding=True,
-                symmetric=True
-            )(self.temperature * inputs / self.std)
+            p = quantized_sigmoid(bits=self.bits_bernoulli_sigmoid, use_stochastic_rounding=True, symmetric=True)(
+                self.temperature * inputs / self.std
+            )
             p = tf.cast(p, tf.float64)
         else:
-            p = tf.keras.backend.sigmoid(self.temperature * inputs / self.std)
+            p = ops.sigmoid(self.temperature * inputs / self.std)
 
         # sample num_samples times from a bernoulli
         out = tf.zeros(tf.shape(inputs))
         for i in range(self.num_samples):
             r = tf.random.uniform(tf.shape(inputs))
             q = tf.sign(p - r)
-            q += (1.0 - tf.abs(q))
+            q += 1.0 - tf.abs(q)
             q = (q + 1.0) / 2.0
             out += q
 
@@ -56,9 +45,11 @@ class BernoulliSampling(tf.keras.layers.Layer):
 
         return out
 
-#@tf.keras.utils.register_keras_serializable()
+
+# @keras.utils.register_keras_serializable()
 class Sampling(layers.Layer):
     """Uses (z_mean, z_log_var) to sample z, the vector encoding a digit."""
+
     def __init__(self, latent_dims, **kwargs):
         super().__init__(**kwargs)
         self.latent_dims = latent_dims
@@ -69,24 +60,26 @@ class Sampling(layers.Layer):
         return z_mean + tf.exp(0.5 * z_log_var) * epsilon
 
 
-#@tf.keras.utils.register_keras_serializable()
+# @keras.utils.register_keras_serializable()
 class MiVAE(BaseEstimator, keras.Model):
     """
-        Stochastically Quantized Variational Auto Endcoder which has a bernoulli
-        activation at the latent layer to max/min the mutual information.
+    Stochastically Quantized Variational Auto Endcoder which has a bernoulli
+    activation at the latent layer to max/min the mutual information.
     """
-    __module__ = "Custom>MiVAE"
 
-    def __init__(self,
+    __module__ = 'Custom>MiVAE'
+
+    def __init__(
+        self,
         hidden_layers=None,
         activation='relu',
         use_s_quark=False,
         use_qkeras=False,
         use_quantflow=False,
         init_quantized_bits=32,
-        input_quantized_bits="quantized_bits(16, 6, 0)",
-        quantized_bits="quantized_bits(16, 6, 0, use_stochastic_rounding=True)",
-        quantized_activation="quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)",
+        input_quantized_bits='quantized_bits(16, 6, 0)',
+        quantized_bits='quantized_bits(16, 6, 0, use_stochastic_rounding=True)',
+        quantized_activation='quantized_relu(10, 6, use_stochastic_rounding=True, negative_slope=0.0)',
         latent_dims=64,
         kernel_regularizer=0.01,
         num_samples=10,
@@ -102,25 +95,24 @@ class MiVAE(BaseEstimator, keras.Model):
         learning_rate=0.0001,
         learning_rate_decay_rate=1,
         learning_rate_decay_steps=1000,
-        optimizer="Adam",
+        optimizer='Adam',
         epoch=60,
         verbose=0,
         patience=3,
-        monitor="kl_loss",
+        monitor='kl_loss',
         validation_size=0,
         run_eagerly=False,
         mi_loss=False,
-        **kwargs
+        **kwargs,
     ):
-
         super().__init__(**kwargs)
 
         # loss trackers
-        self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
-        self.reconstruction_loss_tracker = keras.metrics.Mean(name="reconstruction_loss")
-        self.kl_loss_tracker = keras.metrics.Mean(name="kl_loss")
-        self.mi_loss_tracker = keras.metrics.Mean(name="mi_loss")
-        self.bops_loss_tracker = keras.metrics.Mean(name="bops")
+        self.total_loss_tracker = keras.metrics.Mean(name='total_loss')
+        self.reconstruction_loss_tracker = keras.metrics.Mean(name='reconstruction_loss')
+        self.kl_loss_tracker = keras.metrics.Mean(name='kl_loss')
+        self.mi_loss_tracker = keras.metrics.Mean(name='mi_loss')
+        self.bops_loss_tracker = keras.metrics.Mean(name='bops')
 
         # HP of the model
         self.hidden_layers = hidden_layers
@@ -150,11 +142,11 @@ class MiVAE(BaseEstimator, keras.Model):
         self.learning_rate_decay_rate = learning_rate_decay_rate
         self.learning_rate_decay_steps = learning_rate_decay_steps
         self.optimizer = optimizer
-        if optimizer == "Adam":
-            self.optimizer = tf.keras.optimizers.Adam
-        if optimizer == "SGD":
-            self.optimizer = tf.keras.optimizers.SGD
-        if optimizer == "Nadam":
+        if optimizer == 'Adam':
+            self.optimizer = keras.optimizers.Adam
+        if optimizer == 'SGD':
+            self.optimizer = keras.optimizers.SGD
+        if optimizer == 'Nadam':
             raise NotImplementedError
         self.optimizer_name = optimizer
         self.epoch = epoch
@@ -207,31 +199,27 @@ class MiVAE(BaseEstimator, keras.Model):
                 temperature = 6.0
                 use_real_sigmoid = self.use_quantized_sigmoid
                 # quantized sigmoid
-                _sigmoid = quantized_sigmoid(
-                    bits=self.bits_bernoulli_sigmoid,
-                    use_stochastic_rounding=True,
-                    symmetric=True
-                )
-                if isinstance(alpha, six.string_types):
-                    assert self.alpha in ["auto", "auto_po2"]
+                _sigmoid = quantized_sigmoid(bits=self.bits_bernoulli_sigmoid, use_stochastic_rounding=True, symmetric=True)
+                if isinstance(alpha, str):
+                    assert self.alpha in ['auto', 'auto_po2']
 
-                if isinstance(alpha, six.string_types):
+                if isinstance(alpha, str):
                     len_axis = len(x.shape)
 
                     if len_axis > 1:
-                        if K.image_data_format() == "channels_last":
+                        if keras.backend.image_data_format() == 'channels_last':
                             axis = list(range(len_axis - 1))
                         else:
                             axis = list(range(1, len_axis))
                     else:
                         axis = [0]
 
-                    std = K.std(x, axis=axis, keepdims=True) + K.epsilon()
+                    std = ops.std(x, axis=axis, keepdims=True) + keras.backend.epsilon()
                 else:
                     std = 1.0
 
                 if use_real_sigmoid:
-                    p = tf.keras.backend.sigmoid(temperature * x / std)
+                    p = ops.sigmoid(temperature * x / std)
                 else:
                     p = tf.cast(_sigmoid(temperature * x / std), tf.float64)
 
@@ -302,25 +290,20 @@ class MiVAE(BaseEstimator, keras.Model):
             if self.mi_loss:
                 mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-            total_bops = 0
-            total_bops_std = []
-            if self.use_quantflow:
-                for layer in self.encoder.layers:
-                    if hasattr(layer, 'compute_bops'):
-                        total_bops += layer.compute_bops()
-                    if hasattr(layer, 'compute_bops_std'):
-                        total_bops_std.append(layer.compute_bops_std())
-                if type(self.alpha) != str: total_bops *= self.alpha
+            # total_bops = 0
+            # total_bops_std = []
+            # if self.use_quantflow:
+            #     for layer in self.encoder.layers:
+            #         if hasattr(layer, 'compute_bops'):
+            #             total_bops += layer.compute_bops()
+            #         if hasattr(layer, 'compute_bops_std'):
+            #             total_bops_std.append(layer.compute_bops_std())
+            #     if type(self.alpha) is not str:
+            #         total_bops *= self.alpha
 
-            total_ebops = 0
-            if self.use_quantflow:
-                for loss in self.encoder.losses:
-                    total_ebops = loss + total_ebops
-                for layer in self.encoder.layers:
-                    if hasattr(layer, '_compute_ebops'):
-                        total_ebops += layer._beta * layer._compute_ebops()
+            total_bops = sum([layer.ebops for layer in self.encoder.layers if hasattr(layer, 'ebops')])
 
-            total_loss = reconstruction_loss + kl_loss + mi_loss + total_bops + total_ebops
+            total_loss = reconstruction_loss + kl_loss + mi_loss + sum(self.encoder.losses)
 
         grads = tape.gradient(total_loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
@@ -332,11 +315,11 @@ class MiVAE(BaseEstimator, keras.Model):
         self.bops_loss_tracker.update_state(total_bops)
 
         return {
-            "loss": self.total_loss_tracker.result(),
-            "reconstruction_loss": self.reconstruction_loss_tracker.result(),
-            "kl_loss": self.kl_loss_tracker.result(),
-            "mi_loss": self.mi_loss_tracker.result(),
-            "bops": self.bops_loss_tracker.result(),
+            'loss': self.total_loss_tracker.result(),
+            'reconstruction_loss': self.reconstruction_loss_tracker.result(),
+            'kl_loss': self.kl_loss_tracker.result(),
+            'mi_loss': self.mi_loss_tracker.result(),
+            'bops': self.bops_loss_tracker.result(),
         }
 
     def test_step(self, data):
@@ -357,7 +340,7 @@ class MiVAE(BaseEstimator, keras.Model):
         if self.mi_loss:
             mi_loss = self.gamma * self.mutual_information_bernoulli_loss(s, z)
 
-        total_loss = reconstruction_loss + kl_loss + mi_loss
+        total_loss = reconstruction_loss + kl_loss + mi_loss + sum(self.encoder.losses)
 
         self.total_loss_tracker.update_state(total_loss)
         self.reconstruction_loss_tracker.update_state(reconstruction_loss)
@@ -365,10 +348,10 @@ class MiVAE(BaseEstimator, keras.Model):
         self.mi_loss_tracker.update_state(mi_loss)
 
         return {
-            "loss": self.total_loss_tracker.result(),
-            "reconstruction_loss": self.reconstruction_loss_tracker.result(),
-            "kl_loss": self.kl_loss_tracker.result(),
-            "mi_loss": self.mi_loss_tracker.result(),
+            'loss': self.total_loss_tracker.result(),
+            'reconstruction_loss': self.reconstruction_loss_tracker.result(),
+            'kl_loss': self.kl_loss_tracker.result(),
+            'mi_loss': self.mi_loss_tracker.result(),
         }
 
     def call(self, x, training=True):
@@ -383,98 +366,91 @@ class MiVAE(BaseEstimator, keras.Model):
     def get_encoder(self):
         encoder_inputs = keras.Input(shape=self.inputshape)
 
-        if self.use_qkeras: x = QActivation(self.input_quantized_bits)(encoder_inputs)
-        if self.use_quantflow: x = TQActivation(self.inputshape, bits=self.init_quantized_bits, alpha=self.alpha)(encoder_inputs)
+        if self.use_qkeras:
+            x = QActivation(self.input_quantized_bits)(encoder_inputs)
+        if self.use_quantflow:
+            x = TQActivation(self.inputshape, bits=self.init_quantized_bits, alpha=self.alpha)(encoder_inputs)
         if self.use_s_quark:
             x = encoder_inputs
-            iq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1000))
-            oq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1000))
-            scope0 = QuantizerConfigScope(place='all', k0=1, b0=16, i0=8, default_q_type='kbi', overflow_mode='sat_sym')
-            scope1 = QuantizerConfigScope(place='datalane', k0=0, default_q_type='kif', overflow_mode='sat_sym', f0=8, i0=8)
+            # iq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(2e-6))
+            # oq_conf = QuantizerConfig(place='datalane', k0=1, fr=MonoL1(1000))
+            global_config['beta0'] = self.beta0
+            scope0 = QuantizerConfigScope(place='all', k0=1, b0=4, i0=2, default_q_type='kbi', overflow_mode='sat_sym')
+            scope1 = QuantizerConfigScope(place='datalane', k0=1, default_q_type='kif', overflow_mode='sat_sym', f0=2, i0=2)
 
-        if not self.use_qkeras and not self.use_quantflow and not self.use_s_quark: x = encoder_inputs
+        if not self.use_qkeras and not self.use_quantflow and not self.use_s_quark:
+            x = encoder_inputs
 
         for i, layer in enumerate(self.hidden_layers):
             if self.use_qkeras:
                 x = QDense(
                     layer,
-                    kernel_initializer="glorot_uniform",
+                    kernel_initializer='glorot_uniform',
                     kernel_quantizer=self.quantized_bits,
                     bias_quantizer=self.quantized_bits,
-                    activation=self.quantized_activation
-                    )(x)
-            elif self.use_quantflow:
-                x = TQDense(
-                    layer,
-                    init_bits=self.init_quantized_bits,
-                    activation=self.activation,
-                    alpha=self.alpha
+                    activation=self.quantized_activation,
                 )(x)
+            elif self.use_quantflow:
+                x = TQDense(layer, init_bits=self.init_quantized_bits, activation=self.activation, alpha=self.alpha)(x)
             elif self.use_s_quark:
                 with scope0, scope1:
                     if i == 0:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0, name="input")(x)
+                        x = SQDense(layer, activation=self.activation, name='input')(x)
                     elif i == len(self.hidden_layers) - 1:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0, name="output")(x)
+                        x = SQDense(layer, activation=self.activation, name='output')(x)
                     else:
-                        x = SQDense(layer, activation=self.activation, iq_conf=iq_conf, beta0=self.beta0)(x)
+                        x = SQDense(layer, activation=self.activation)(x)
             else:
                 x = layers.Dense(
                     layer,
                     activation=self.activation,
                     kernel_regularizer=L2(self.kernel_regularizer),
-                    activity_regularizer=L2(self.kernel_regularizer)
+                    activity_regularizer=L2(self.kernel_regularizer),
                 )(x)
-            if self.use_batchnorm: x = layers.BatchNormalization()(x)
-            if self.drop_out > 0: x = layers.Dropout(self.drop_out)(x)
+            if self.use_batchnorm:
+                x = layers.BatchNormalization()(x)
+            if self.drop_out > 0:
+                x = layers.Dropout(self.drop_out)(x)
 
         # setup latent layers
         if self.use_qkeras:
             z_mean = QDense(
                 self.latent_dims,
-                name="z_mean",
-                kernel_initializer="glorot_uniform",
+                name='z_mean',
+                kernel_initializer='glorot_uniform',
                 kernel_quantizer=self.quantized_bits,
                 bias_quantizer=self.quantized_bits,
             )(x)
             z_log_var = QDense(
                 self.latent_dims,
-                name="z_log_var",
-                kernel_initializer="glorot_uniform",
+                name='z_log_var',
+                kernel_initializer='glorot_uniform',
                 kernel_quantizer=self.quantized_bits,
                 bias_quantizer=self.quantized_bits,
             )(x)
         elif self.use_s_quark:
             with scope0, scope1:
-                z_mean = SQDense(self.latent_dims, activation="linear", beta0=self.beta0)(x)
-                z_log_var = SQDense(self.latent_dims, activation="linear", beta0=self.beta0)(x)
+                z_mean = SQDense(self.latent_dims, activation='linear')(x)
+                z_log_var = SQDense(self.latent_dims, activation='linear')(x)
         elif self.use_quantflow:
             z_mean = TQDense(
-                self.latent_dims,
-                name="z_mean",
-                init_bits=self.init_quantized_bits,
-                activation="linear",
-                alpha=self.alpha
+                self.latent_dims, name='z_mean', init_bits=self.init_quantized_bits, activation='linear', alpha=self.alpha
             )(x)
             z_log_var = TQDense(
-                self.latent_dims,
-                name="z_log_var",
-                init_bits=self.init_quantized_bits,
-                activation="linear",
-                alpha=self.alpha
+                self.latent_dims, name='z_log_var', init_bits=self.init_quantized_bits, activation='linear', alpha=self.alpha
             )(x)
         else:
             z_mean = layers.Dense(
                 self.latent_dims,
-                name="z_mean",
+                name='z_mean',
                 kernel_regularizer=L2(self.kernel_regularizer),
-                activity_regularizer=L2(self.kernel_regularizer)
+                activity_regularizer=L2(self.kernel_regularizer),
             )(x)
             z_log_var = layers.Dense(
                 self.latent_dims,
-                name="z_log_var",
+                name='z_log_var',
                 kernel_regularizer=L2(self.kernel_regularizer),
-                activity_regularizer=L2(self.kernel_regularizer)
+                activity_regularizer=L2(self.kernel_regularizer),
             )(x)
 
         z = Sampling(self.latent_dims)([z_mean, z_log_var])
@@ -483,22 +459,14 @@ class MiVAE(BaseEstimator, keras.Model):
                 self.num_samples,
                 use_quantized=self.use_quantized_sigmoid,
                 bits_bernoulli_sigmoid=self.bits_bernoulli_sigmoid,
-                name="bernoulli"
+                name='bernoulli',
             )(z)
 
             # build encoder
-            encoder = keras.Model(
-                encoder_inputs,
-                [z_mean, z_log_var, z, z_sample],
-                name="encoder"
-            )
+            encoder = keras.Model(encoder_inputs, [z_mean, z_log_var, z, z_sample], name='encoder')
         else:
             # build encoder
-            encoder = keras.Model(
-                encoder_inputs,
-                [z_mean, z_log_var, z],
-                name="encoder"
-            )
+            encoder = keras.Model(encoder_inputs, [z_mean, z_log_var, z], name='encoder')
         if self.verbose > 0:
             encoder.summary()
         return encoder
@@ -513,67 +481,61 @@ class MiVAE(BaseEstimator, keras.Model):
                 layer,
                 activation=self.activation,
                 kernel_regularizer=L2(self.kernel_regularizer),
-                activity_regularizer=L2(self.kernel_regularizer)
+                activity_regularizer=L2(self.kernel_regularizer),
             )(x)
-            if self.use_batchnorm: x = layers.BatchNormalization()(x)
-            if self.drop_out > 0: x = layers.Dropout(self.drop_out)(x)
+            if self.use_batchnorm:
+                x = layers.BatchNormalization()(x)
+            if self.drop_out > 0:
+                x = layers.Dropout(self.drop_out)(x)
 
         # last layer
         x = layers.Dense(
             self.inputshape[0],
-            activation="sigmoid",
+            activation='sigmoid',
             kernel_regularizer=L2(self.kernel_regularizer),
-            activity_regularizer=L2(self.kernel_regularizer)
+            activity_regularizer=L2(self.kernel_regularizer),
         )(x)
 
         # build decoder
-        decoder = keras.Model(
-            latent_inputs,
-            x,
-            name="decoder"
-        )
+        decoder = keras.Model(latent_inputs, x, name='decoder')
         if self.verbose > 0:
             decoder.summary()
         return decoder
 
     def fit(self, x, s):
-
         # get input shape
         self.inputshape = [x.shape[1]]
 
         # fill up batch size NOTE: loss can have NaN values so batch_size should be not to small
         if len(x) % self.batch_size != 0:
-            x = np.concatenate([x, x[:self.batch_size-len(x) % self.batch_size]])
-            s = np.concatenate([s, s[:self.batch_size-len(s) % self.batch_size]])
+            x = np.concatenate([x, x[: self.batch_size - len(x) % self.batch_size]])
+            s = np.concatenate([s, s[: self.batch_size - len(s) % self.batch_size]])
 
         self.encoder = self.get_encoder()
         self.decoder = self.get_decoder()
 
-        lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+        lr_schedule = keras.optimizers.schedules.InverseTimeDecay(
             self.learning_rate,
             decay_steps=self.learning_rate_decay_steps,
             decay_rate=self.learning_rate_decay_rate,
-            staircase=False
+            staircase=False,
         )
 
         if type(self.optimizer) is str:
-            if self.optimizer == "Adam":
-                self.optimizer = tf.keras.optimizers.Adam
-            if self.optimizer == "SGD":
-                self.optimizer = tf.keras.optimizers.SGD
-            if self.optimizer == "Nadam":
-                self.optimizer = tf.keras.optimizers.Nadam
+            if self.optimizer == 'Adam':
+                self.optimizer = keras.optimizers.Adam
+            if self.optimizer == 'SGD':
+                self.optimizer = keras.optimizers.SGD
+            if self.optimizer == 'Nadam':
+                self.optimizer = keras.optimizers.Nadam
 
         self.compile(
             optimizer=self.optimizer(lr_schedule),
             run_eagerly=self.run_eagerly,
+            jit_compile=False,
         )
 
-        callback = [keras.callbacks.EarlyStopping(
-            monitor=self.monitor,
-            mode='min',
-            patience=self.patience
-        )]
+        callback = [keras.callbacks.EarlyStopping(monitor=self.monitor, mode='min', patience=self.patience)]
 
         if self.use_s_quark:
             nan_terminate = keras.callbacks.TerminateOnNaN()
@@ -581,14 +543,7 @@ class MiVAE(BaseEstimator, keras.Model):
             callback.append(nan_terminate)
             callback.append(ebops)
 
-        history = super().fit(
-            x,
-            s,
-            epochs=self.epoch,
-            batch_size=self.batch_size,
-            verbose=self.verbose,
-            callbacks=callback
-        )
+        history = super().fit(x, s, epochs=self.epoch, batch_size=self.batch_size, verbose=self.verbose, callbacks=callback)
         return history
 
     def score(self, x, y):
@@ -613,7 +568,7 @@ class MiVAE(BaseEstimator, keras.Model):
         else:
             z_mean, z_log_var, z = self.encoder(x, training=False)
         reconstruction = self.decoder(z)
-        reconstruction_loss = tf.keras.losses.mse(x, reconstruction)
+        reconstruction_loss = keras.losses.mse(x, reconstruction)
         kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
         kl_loss = self.beta_param * tf.reduce_sum(kl_loss, axis=1)
         total_loss = reconstruction_loss + kl_loss
@@ -633,8 +588,8 @@ class MiVAE(BaseEstimator, keras.Model):
         out = dict()
         for key in self._get_param_names():
             cur_key = key
-            if key == "optimizer":
-                cur_key = "optimizer_name"
+            if key == 'optimizer':
+                cur_key = 'optimizer_name'
             out[key] = getattr(self, cur_key)
         return out
 
@@ -658,7 +613,7 @@ class MiVAE(BaseEstimator, keras.Model):
 
         drop_key = []
         for key in d.keys():
-            if key.startswith("_"):
+            if key.startswith('_'):
                 drop_key.append(key)
 
         for key in drop_key:

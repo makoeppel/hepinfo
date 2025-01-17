@@ -4,3 +4,5 @@ hepinfo/*.egg-info/*
 hepinfo.egg-info/*
 venv/*
 data/*
+*.pyc
+__pycache__/*

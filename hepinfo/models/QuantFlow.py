@@ -1,6 +1,7 @@
 import random
-import tensorflow as tf
 
+import keras
+import tensorflow as tf
 from keras.api import Model
 from keras.api.callbacks import Callback
 
@@ -15,6 +16,7 @@ class FreeBOPs(Callback):
                 bops += layer.compute_bops()
         logs['bops'] = bops
 
+
 def round(x, round_type):
     if round_type == 0:  # standard round
         return tf.floor(x + 0.5)
@@ -23,20 +25,22 @@ def round(x, round_type):
         noise = tf.random.uniform(tf.shape(x))
         return tf.where(noise < x - _floor, _floor + 1, _floor)
 
+
 def quantize(x, bits, round_type):
     """Quantize a tensor to a given number of bits."""
     scale = tf.pow(2.0, bits) - 1
     quantized = round(x * scale, round_type) / scale
     return x + tf.stop_gradient(quantized - x)  # STE approximation
 
+
 def quantized_sigmoid(x, bits, round_type):
     """
     Quantized version of the sigmoid activation function.
-    
+
     Args:
         x (tf.Tensor): Input tensor.
         bits (int): Number of bits to quantize the output to.
-        
+
     Returns:
         tf.Tensor: Quantized sigmoid output.
     """
@@ -45,10 +49,11 @@ def quantized_sigmoid(x, bits, round_type):
     quantized = round(sigmoid * scale, round_type) / scale  # Quantize to discrete levels
     return sigmoid + tf.stop_gradient(quantized - sigmoid)  # STE approximation
 
+
 def quantized_relu(x, bits, max_value, round_type):
     """
     Quantized version of the ReLU activation function.
-    
+
     Args:
         x (tf.Tensor): Input tensor.
         bits (int): Number of bits to quantize the output to.
@@ -62,8 +67,11 @@ def quantized_relu(x, bits, max_value, round_type):
     quantized = round(relu * scale / max_value, round_type) * max_value / scale  # Quantize to discrete levels
     return relu + tf.stop_gradient(quantized - relu)  # STE approximation
 
-class TQActivation(tf.keras.layers.Layer):
-    def __init__(self, input_shape, bits, min_bits=0, max_bits=32, clip_min=-1.0, clip_max=1.0, round_type=1, alpha="random", **kwargs):
+
+class TQActivation(keras.layers.Layer):
+    def __init__(
+        self, input_shape, bits, min_bits=0, max_bits=32, clip_min=-1.0, clip_max=1.0, round_type=1, alpha='random', **kwargs
+    ):
         """
         Trainable Quantized Activation Layer.
 
@@ -73,10 +81,10 @@ class TQActivation(tf.keras.layers.Layer):
             clip_min (float): Minimum value for clipping activations.
             clip_max (float): Maximum value for clipping activations.
         """
-        super(TQActivation, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.input_shape = input_shape
         self.bits = bits
-        if type(bits) == str and bits == "random":
+        if type(bits) is str and bits == 'random':
             self.bits = random.randrange(16, 32)
         self.min_bits = min_bits
         self.max_bits = max_bits
@@ -84,15 +92,15 @@ class TQActivation(tf.keras.layers.Layer):
         self.clip_max = clip_max
         self.round_type = round_type
         self.alpha = alpha
-        if type(alpha) == str and alpha == "random":
+        if type(alpha) is str and alpha == 'random':
             self.alpha = random.uniform(0, 1)
 
     def build(self, input_shape):
         # Trainable bit width
         self.activation_bits = self.add_weight(
-            name="bits",
+            name='bits',
             shape=(input_shape[-1],),
-            initializer=tf.keras.initializers.Constant(self.bits),
+            initializer=keras.initializers.Constant(self.bits),
             trainable=True,
         )
 
@@ -132,145 +140,160 @@ class TQActivation(tf.keras.layers.Layer):
         return total_bops_std
 
     def get_config(self):
-        config = super(TQActivation, self).get_config()
-        config.update({
-            "min_bits": self.min_bits,
-            "max_bits": self.max_bits,
-            "clip_min": self.clip_min,
-            "clip_max": self.clip_max,
-        })
+        config = super().get_config()
+        config.update(
+            {
+                'min_bits': self.min_bits,
+                'max_bits': self.max_bits,
+                'clip_min': self.clip_min,
+                'clip_max': self.clip_max,
+            }
+        )
         return config
 
-class TQDense(tf.keras.layers.Layer):
-  def __init__(self, units, activation="linear", init_bits=16, min_bits=0, max_bits=32, max_value_relu=32, alpha="random", round_type=1, **kwargs):
-      """
-      A quantized Dense layer with trainable bit widths for weights, activations, and biases.
-      
-      Args:
-          units (int): Number of output units.
-          min_bits (int): Minimum bit width allowed.
-          max_bits (int): Maximum bit width allowed.
-          kwargs: Additional arguments for the Layer superclass.
-      """
-      super(TQDense, self).__init__(**kwargs)
-      self.units = units
-      self.activation = activation
-      self.init_bits_weight = init_bits
-      self.init_bits_activation = init_bits
-      self.init_bits_bias = init_bits
-      if type(init_bits) == str and init_bits == "random":
-        # TODO: set range of bits
-        self.init_bits_weight = random.randrange(8, 32)
-        self.init_bits_activation = random.randrange(8, 32)
-        self.init_bits_bias = random.randrange(8, 32)
-      self.min_bits = min_bits
-      self.max_bits = max_bits
-      self.max_value_relu = max_value_relu
-      self.alpha = alpha
-      if type(alpha) == str and alpha == "random":
-        self.alpha = random.uniform(0, 1)
-      self.round_type = round_type
 
-  def build(self, input_shape):
-      # Initialize weights, biases, and their bit widths
-      self.kernel = self.add_weight(
-          name="kernel",
-          shape=(input_shape[-1], self.units),
-          initializer="he_normal",
-          trainable=True,
-      )
-      self.bias = self.add_weight(
-          name="bias",
-          shape=(self.units,),
-          initializer="zeros",
-          trainable=True,
-      )
+class TQDense(keras.layers.Layer):
+    def __init__(
+        self,
+        units,
+        activation='linear',
+        init_bits=16,
+        min_bits=0,
+        max_bits=32,
+        max_value_relu=32,
+        alpha='random',
+        round_type=1,
+        **kwargs,
+    ):
+        """
+        A quantized Dense layer with trainable bit widths for weights, activations, and biases.
 
-      # Trainable bit widths
-      self.weight_bits = self.add_weight(
-          name="weight_bits",
-          shape=(input_shape[-1], self.units),
-          initializer=tf.keras.initializers.Constant(self.init_bits_weight),
-          trainable=True,
-          dtype=tf.float32,
-      )
-      self.activation_bits = self.add_weight(
-          name="activation_bits",
-          shape=(self.units,),
-          initializer=tf.keras.initializers.Constant(self.init_bits_activation),
-          trainable=True,
-          dtype=tf.float32,
-      )
-      self.bias_bits = self.add_weight(
-          name="bias_bits",
-          shape=(self.units,),
-          initializer=tf.keras.initializers.Constant(self.init_bits_bias),
-          trainable=True,
-          dtype=tf.float32,
-      )
+        Args:
+            units (int): Number of output units.
+            min_bits (int): Minimum bit width allowed.
+            max_bits (int): Maximum bit width allowed.
+            kwargs: Additional arguments for the Layer superclass.
+        """
+        super().__init__(**kwargs)
+        self.units = units
+        self.activation = activation
+        self.init_bits_weight = init_bits
+        self.init_bits_activation = init_bits
+        self.init_bits_bias = init_bits
+        if type(init_bits) is str and init_bits == 'random':
+            # TODO: set range of bits
+            self.init_bits_weight = random.randrange(8, 32)
+            self.init_bits_activation = random.randrange(8, 32)
+            self.init_bits_bias = random.randrange(8, 32)
+        self.min_bits = min_bits
+        self.max_bits = max_bits
+        self.max_value_relu = max_value_relu
+        self.alpha = alpha
+        if type(alpha) is str and alpha == 'random':
+            self.alpha = random.uniform(0, 1)
+        self.round_type = round_type
 
-  def compute_bops(self):
-    """
-    Compute the BOPs for this layer.
-    Layer BOPs = (num_weights x weight_bits) + (num_activations x activation_bits) + (num_biases x bias_bits)
+    def build(self, input_shape):
+        # Initialize weights, biases, and their bit widths
+        self.kernel = self.add_weight(
+            name='kernel',
+            shape=(input_shape[-1], self.units),
+            initializer='he_normal',
+            trainable=True,
+        )
+        self.bias = self.add_weight(
+            name='bias',
+            shape=(self.units,),
+            initializer='zeros',
+            trainable=True,
+        )
 
-    Args:
-        num_activations (int): Number of activations in the layer output.
+        # Trainable bit widths
+        self.weight_bits = self.add_weight(
+            name='weight_bits',
+            shape=(input_shape[-1], self.units),
+            initializer=keras.initializers.Constant(self.init_bits_weight),
+            trainable=True,
+            dtype=tf.float32,
+        )
+        self.activation_bits = self.add_weight(
+            name='activation_bits',
+            shape=(self.units,),
+            initializer=keras.initializers.Constant(self.init_bits_activation),
+            trainable=True,
+            dtype=tf.float32,
+        )
+        self.bias_bits = self.add_weight(
+            name='bias_bits',
+            shape=(self.units,),
+            initializer=keras.initializers.Constant(self.init_bits_bias),
+            trainable=True,
+            dtype=tf.float32,
+        )
 
-    Returns:
-        float: BOPs for this layer.
-    """
+    def compute_bops(self):
+        """
+        Compute the BOPs for this layer.
+        Layer BOPs = (num_weights x weight_bits) + (num_activations x activation_bits) + (num_biases x bias_bits)
 
-    # Compute individual weight BOPs
-    weight_bops = tf.reduce_sum(self.weight_bits)  # Sum trainable bit-widths per weight
-    bias_bops = tf.reduce_sum(self.bias_bits)
-    activation_bops = tf.reduce_sum(self.activation_bits)
+        Args:
+            num_activations (int): Number of activations in the layer output.
 
-    # Total BOPs for the layer
-    total_bops = weight_bops + bias_bops + activation_bops
-    return total_bops
+        Returns:
+            float: BOPs for this layer.
+        """
 
-  def compute_bops_std(self):
-    weight_bops_std = tf.math.reduce_std(self.weight_bits)
-    bias_bops_std = tf.math.reduce_std(self.bias_bits)
-    activation_bops_std = tf.math.reduce_std(self.activation_bits)
-    total_bops_std = [weight_bops_std, bias_bops_std, activation_bops_std]
-    return tf.reduce_mean(total_bops_std)
+        # Compute individual weight BOPs
+        weight_bops = tf.reduce_sum(self.weight_bits)  # Sum trainable bit-widths per weight
+        bias_bops = tf.reduce_sum(self.bias_bits)
+        activation_bops = tf.reduce_sum(self.activation_bits)
 
-  def call(self, inputs):
-      # Quantize kernel (weights)
-      unsigned_weight_bits = tf.clip_by_value(self.weight_bits, self.min_bits, self.max_bits)
-      quantized_kernel = quantize(self.kernel, unsigned_weight_bits, self.round_type)
+        # Total BOPs for the layer
+        total_bops = weight_bops + bias_bops + activation_bops
+        return total_bops
 
-      # Compute the output
-      output = tf.matmul(inputs, quantized_kernel)
+    def compute_bops_std(self):
+        weight_bops_std = tf.math.reduce_std(self.weight_bits)
+        bias_bops_std = tf.math.reduce_std(self.bias_bits)
+        activation_bops_std = tf.math.reduce_std(self.activation_bits)
+        total_bops_std = [weight_bops_std, bias_bops_std, activation_bops_std]
+        return tf.reduce_mean(total_bops_std)
 
-      # Quantize bias
-      unsigned_bias_bits = tf.clip_by_value(self.bias_bits, self.min_bits, self.max_bits)
-      quantized_bias = quantize(self.bias, unsigned_bias_bits, self.round_type)
-      output = tf.nn.bias_add(output, quantized_bias)
+    def call(self, inputs):
+        # Quantize kernel (weights)
+        unsigned_weight_bits = tf.clip_by_value(self.weight_bits, self.min_bits, self.max_bits)
+        quantized_kernel = quantize(self.kernel, unsigned_weight_bits, self.round_type)
 
-      # Quantize activations
-      unsigned_activation_bits = tf.clip_by_value(self.activation_bits, self.min_bits, self.max_bits)
-      if self.activation == "sigmoid":
-        output = quantized_sigmoid(output, unsigned_activation_bits, self.round_type)
+        # Compute the output
+        output = tf.matmul(inputs, quantized_kernel)
 
-      if self.activation == "relu":
-        output = quantized_relu(output, unsigned_activation_bits, self.max_value_relu, self.round_type)
+        # Quantize bias
+        unsigned_bias_bits = tf.clip_by_value(self.bias_bits, self.min_bits, self.max_bits)
+        quantized_bias = quantize(self.bias, unsigned_bias_bits, self.round_type)
+        output = tf.nn.bias_add(output, quantized_bias)
 
-      if self.activation == "linear":
-        output = quantize(output, unsigned_activation_bits, self.round_type)
+        # Quantize activations
+        unsigned_activation_bits = tf.clip_by_value(self.activation_bits, self.min_bits, self.max_bits)
+        if self.activation == 'sigmoid':
+            output = quantized_sigmoid(output, unsigned_activation_bits, self.round_type)
 
-      self.add_loss(self.alpha * self.compute_bops())
+        if self.activation == 'relu':
+            output = quantized_relu(output, unsigned_activation_bits, self.max_value_relu, self.round_type)
 
-      return tf.convert_to_tensor(output)
+        if self.activation == 'linear':
+            output = quantize(output, unsigned_activation_bits, self.round_type)
 
-  def get_config(self):
-      config = super(TQDense, self).get_config()
-      config.update({
-          "units": self.units,
-          "min_bits": self.min_bits,
-          "max_bits": self.max_bits,
-          "max_bits": self.max_bits,
-      })
-      return config
+        self.add_loss(self.alpha * self.compute_bops())
+
+        return tf.convert_to_tensor(output)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                'units': self.units,
+                'min_bits': self.min_bits,
+                'max_bits': self.max_bits,
+            }
+        )
+        return config

@@ -183,3 +183,15 @@ hmodel = hls4ml.converters.convert_from_keras_model(
 hmodel.build(vsynth=True)
 
 hls4ml.report.read_vivado_report(args.project_path)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser("Run load trained models")
+    parser.add_argument("model_path", help="Model which should be load.", type=str)
+    parser.add_argument("bernoulli_path", help="Absolute path to the bernoulli.h layer.", type=str)
+    args = parser.parse_args()
+
+    if os.path.isdir(args.project_path):
+        raise ValueError(f'The project path {args.project_path} is not empty.')
+
+    test_model(args)

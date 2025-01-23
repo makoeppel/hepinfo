@@ -2,12 +2,14 @@
 #define NNET_BERNOULLI_H_
 
 #include "nnet_common.h"
+#include "ap_fixed.h"
+
 
 namespace nnet {
 
 struct bernoulli_config {
     static const unsigned n_in = 10;
-    const double thr = 0.5;
+    const ap_ufixed<1,0> thr = 0.5;
 };
 
 template<class data_T, typename CONFIG_T>

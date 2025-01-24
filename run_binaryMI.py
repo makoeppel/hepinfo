@@ -25,9 +25,9 @@ X_train = scaler.fit_transform(X_train)
 X_test = scaler.transform(X_test)
 
 # train the transfer model
-use_quantflow = True
+use_quantflow = False
 use_s_quark = False
-use_qkeras = False
+use_qkeras = True
 BMI = BinaryMI(
     kernel_regularizer=0.01,
     batch_size=1024,
@@ -57,13 +57,13 @@ BMI = BinaryMI(
 )
 history = BMI.fit(x_train=X_train, y_train=y_train, s_train=S_train)
 if use_quantflow:
-    BMI.model.save('binaryMI_quantflow.keras')
+    BMI.model.save('trained_models/binaryMI_quantflow.keras')
 if use_s_quark:
-    BMI.model.save('binaryMI_squark.keras')
+    BMI.model.save('trained_models/binaryMI_squark.keras')
 if use_qkeras:
-    BMI.model.save('binaryMI_qkeras.keras')
+    BMI.model.save('trained_models/binaryMI_qkeras.keras')
 if not use_qkeras and not use_quantflow and not use_s_quark:
-    BMI.model.save('binaryMI_full.keras')
+    BMI.model.save('trained_models/binaryMI_full.keras')
 
 y_pred = BMI.predict_proba(X_test)
 auc_value = roc_auc_score(y_test, y_pred)

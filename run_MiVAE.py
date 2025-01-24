@@ -90,7 +90,7 @@ for i in range(10):
 
     for layer in MiVAE_model.encoder.layers:
         if isinstance(layer, BernoulliSampling):
-            layer.thr.assign((i/10,)) 
+            layer.thr.assign((i/10,))
 
 if use_quantflow:
     plt.plot(history.history['bops'], '.')

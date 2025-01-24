@@ -1,11 +1,19 @@
-import awkward as ak
-import h5py
-import keras
+import h5py, keras, os
+
 import numpy as np
+import pandas as pd
+import awkward as ak
 import tensorflow as tf
+
+from joblib import dump, load
+
 from keras.api import ops
-from keras.api.saving import register_keras_serializable
+
 from hepinfo.models.qkerasV3 import quantized_sigmoid
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_curve, auc
 
 
 def readFromAnomalyh5(inputfile, process, object_ranges='default1', moreInfo=None, verbosity=0):
@@ -308,3 +316,239 @@ class MILoss(keras.losses.Loss):
 
     def get_config(self):
         return super().get_config()
+
+# following code is based on: https://www.kaggle.com/code/matteomonzali/nn-model
+
+def __rolling_window(data, window_size):
+    """
+    Rolling window: take window with definite size through the array
+
+    :param data: array-like
+    :param window_size: size
+    :return: the sequence of windows
+
+    Example: data = array(1, 2, 3, 4, 5, 6), window_size = 4
+        Then this function return array(array(1, 2, 3, 4), array(2, 3, 4, 5), array(3, 4, 5, 6))
+    """
+    shape = data.shape[:-1] + (data.shape[-1] - window_size + 1, window_size)
+    strides = data.strides + (data.strides[-1],)
+    return np.lib.stride_tricks.as_strided(data, shape=shape, strides=strides)
+
+
+def __cvm(subindices, total_events):
+    """
+    Compute Cramer-von Mises metric.
+    Compared two distributions, where first is subset of second one.
+    Assuming that second is ordered by ascending
+
+    :param subindices: indices of events which will be associated with the first distribution
+    :param total_events: count of events in the second distribution
+    :return: cvm metric
+    """
+    target_distribution = np.arange(1, total_events + 1, dtype='float') / total_events
+    subarray_distribution = np.cumsum(np.bincount(subindices, minlength=total_events), dtype='float')
+    subarray_distribution /= 1.0 * subarray_distribution[-1]
+    return np.mean((target_distribution - subarray_distribution) ** 2)
+
+
+def compute_cvm(predictions, masses, n_neighbours=200, step=50):
+    """
+    Computing Cramer-von Mises (cvm) metric on background events: take average of cvms calculated for each mass bin.
+    In each mass bin global prediction's cdf is compared to prediction's cdf in mass bin.
+
+    :param predictions: array-like, predictions
+    :param masses: array-like, in case of Kaggle tau23mu this is reconstructed mass
+    :param n_neighbours: count of neighbours for event to define mass bin
+    :param step: step through sorted mass-array to define next center of bin
+    :return: average cvm value
+    """
+    predictions = np.array(predictions)
+    masses = np.array(masses)
+    assert len(predictions) == len(masses)
+
+    # First, reorder by masses
+    predictions = predictions[np.argsort(masses)]
+
+    # Second, replace probabilities with order of probability among other events
+    predictions = np.argsort(np.argsort(predictions, kind='mergesort'), kind='mergesort')
+
+    # Now, each window forms a group, and we can compute contribution of each group to CvM
+    cvms = []
+    for window in __rolling_window(predictions, window_size=n_neighbours)[::step]:
+        cvms.append(__cvm(subindices=window, total_events=len(predictions)))
+    return np.mean(cvms)
+
+
+def __roc_curve_splitted(data_zero, data_one, sample_weights_zero, sample_weights_one):
+    """
+    Compute roc curve
+
+    :param data_zero: 0-labeled data
+    :param data_one:  1-labeled data
+    :param sample_weights_zero: weights for 0-labeled data
+    :param sample_weights_one:  weights for 1-labeled data
+    :return: roc curve
+    """
+    labels = [0] * len(data_zero) + [1] * len(data_one)
+    weights = np.concatenate([sample_weights_zero, sample_weights_one])
+    data_all = np.concatenate([data_zero, data_one])
+    fpr, tpr, _ = roc_curve(labels, data_all, sample_weight=weights)
+    return fpr, tpr
+
+
+def compute_ks(data_prediction, mc_prediction, weights_data, weights_mc):
+    """
+    Compute Kolmogorov-Smirnov (ks) distance between real data predictions cdf and Monte Carlo one.
+
+    :param data_prediction: array-like, real data predictions
+    :param mc_prediction: array-like, Monte Carlo data predictions
+    :param weights_data: array-like, real data weights
+    :param weights_mc: array-like, Monte Carlo weights
+    :return: ks value
+    """
+    assert len(data_prediction) == len(weights_data), 'Data length and weight one must be the same'
+    assert len(mc_prediction) == len(weights_mc), 'Data length and weight one must be the same'
+
+    data_prediction, mc_prediction = np.array(data_prediction), np.array(mc_prediction)
+    weights_data, weights_mc = np.array(weights_data), np.array(weights_mc)
+
+    assert np.all(data_prediction >= 0.) and np.all(data_prediction <= 1.), 'Data predictions are out of range [0, 1]'
+    assert np.all(mc_prediction >= 0.) and np.all(mc_prediction <= 1.), 'MC predictions are out of range [0, 1]'
+
+    weights_data /= np.sum(weights_data)
+    weights_mc /= np.sum(weights_mc)
+
+    fpr, tpr = __roc_curve_splitted(data_prediction, mc_prediction, weights_data, weights_mc)
+
+    Dnm = np.max(np.abs(fpr - tpr))
+    return Dnm
+
+
+def roc_auc_truncated(labels, predictions, tpr_thresholds=(0.2, 0.4, 0.6, 0.8),
+                      roc_weights=(4, 3, 2, 1, 0)):
+    """
+    Compute weighted area under ROC curve.
+
+    :param labels: array-like, true labels
+    :param predictions: array-like, predictions
+    :param tpr_thresholds: array-like, true positive rate thresholds delimiting the ROC segments
+    :param roc_weights: array-like, weights for true positive rate segments
+    :return: weighted AUC
+    """
+    assert np.all(predictions >= 0.) and np.all(predictions <= 1.), 'Data predictions are out of range [0, 1]'
+    assert len(tpr_thresholds) + 1 == len(roc_weights), 'Incompatible lengths of thresholds and weights'
+    fpr, tpr, _ = roc_curve(labels, predictions)
+    area = 0.
+    tpr_thresholds = [0.] + list(tpr_thresholds) + [1.]
+    for index in range(1, len(tpr_thresholds)):
+        tpr_cut = np.minimum(tpr, tpr_thresholds[index])
+        tpr_previous = np.minimum(tpr, tpr_thresholds[index - 1])
+        area += roc_weights[index - 1] * (auc(fpr, tpr_cut, reorder=True) - auc(fpr, tpr_previous, reorder=True))
+    tpr_thresholds = np.array(tpr_thresholds)
+    # roc auc normalization to be 1 for an ideal classifier
+    area /= np.sum((tpr_thresholds[1:] - tpr_thresholds[:-1]) * np.array(roc_weights))
+    return area
+
+def load_tau_data(path):
+
+    if os.path.isfile(f"{path}/train_vali_data.npy"):
+        X_train = np.load(f"{path}/X_train.npy")
+        X_test = np.load(f"{path}/X_test.npy")
+        y_train = np.load(f"{path}/y_train.npy")
+        y_test = np.load(f"{path}/y_test.npy")
+        S_train = np.load(f"{path}/S_train.npy")
+        S_test = np.load(f"{path}/S_test.npy")
+        agreement_weight = np.load(f"{path}/agreement_weight.npy")
+        agreement_signal = np.load(f"{path}/agreement_signal.npy")
+        agreement_test_feature = np.load(f"{path}/agreement_test_feature.npy")
+        test = np.load(f"{path}/test.npy")
+        correlation = np.load(f"{path}/correlation.npy")
+        scaler = load(f"{path}/scaler.joblib")
+
+        train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
+        agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]
+        meta_data = [test, correlation, scaler]
+
+        return train_vali_data, agreement_data, meta_data
+
+    # load data
+    # The label ‘signal’ being ‘1’ for signal events, ‘0’ for background events
+    # the signal events are simulated, while background events are real data.
+    training = pd.read_csv(f"{path}/training.csv")
+    # The test dataset has all the columns that training.csv has, except
+    # mass, production, min_ANNmuon, and signal.
+    test = pd.read_csv(f"{path}/test.csv")
+    # Simulated and real events from the channel Ds → φπ to evaluate
+    # the performance for simulated-real data
+    # It contains the same columns as test.csv and weight column. 
+    agreement = pd.read_csv(f"{path}/check_agreement.csv")
+    # Only real background events recorded at LHCb to evaluate
+    # the mass values locally.
+    # It contains the same columns as test.csv and mass column to check correlation
+    correlation = pd.read_csv(f"{path}/check_correlation.csv")
+
+    # simulation (source) (signal==1) contains 8205 examples 
+    # real data (target) (signal==0) contains 322942 examples with weight values
+    counts = np.unique(agreement["signal"], return_counts=True)
+    counts_train = np.unique(training["signal"], return_counts=True)
+
+    print(f"Agreement data # source domain: {counts[1][1]}, # target domain: {counts[1][0]}")
+    print(f"Training data # source domain: {counts_train[1][1]}, # target domain: {counts_train[1][0]}")
+
+    # prepare the data
+
+    # split the data for agreement test at the end
+    agreement_train, agreement_test = \
+        train_test_split(agreement, test_size=0.666)
+
+    # we take equal values from both groups
+    agreement_train_s0 = agreement_train[agreement_train["signal"]==0].sample(n=int(len(agreement_train[agreement_train["signal"]==1])/2))
+    agreement_train_s1 = agreement_train[agreement_train["signal"]==1].sample(n=int(len(agreement_train[agreement_train["signal"]==1])/2))
+    agreement = pd.concat([agreement_train_s0, agreement_train_s1])
+
+    # prepare the data for the domain adaptation task
+    s = np.concatenate([agreement_train["signal"].to_numpy(), training["signal"].to_numpy()])
+    agreement_train = agreement_train.drop(columns=["id", "signal", "SPDhits", "weight"], axis = 1)
+
+    # from the agreement data we only have background so y=0
+    y = np.concatenate([np.zeros(len(agreement_train)), training["signal"].to_numpy()])
+
+    # Note: for this example we dont use the mass
+    # mass_train = training["mass"]
+
+    # create the features to train on
+    x = training.drop(columns=["id", "production", "min_ANNmuon", "signal", "mass", "SPDhits"], axis = 1)
+    x = pd.concat([agreement_train, x], ignore_index=True)
+
+    # split the data into train and test set
+    X_train, X_test, y_train, y_test, S_train, S_test = \
+        train_test_split(x, y, s, test_size=0.333)
+
+    # scale data
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    # prepare agreement data
+    agreement_weight = agreement_test["weight"]
+    agreement_signal = agreement_test["signal"]
+    agreement_test_feature = agreement_test.drop(columns=["id", "signal", "SPDhits", "weight"])
+
+    train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
+    agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]
+    meta_data = [test, correlation, scaler]
+
+    np.save(f"{path}/X_train", X_train)
+    np.save(f"{path}/X_test", X_test)
+    np.save(f"{path}/y_train", y_train)
+    np.save(f"{path}/y_test", y_test)
+    np.save(f"{path}/S_train", S_train)
+    np.save(f"{path}/S_test", S_test)
+    np.save(f"{path}/agreement_weight", agreement_weight)
+    np.save(f"{path}/agreement_signal", agreement_signal)
+    np.save(f"{path}/agreement_test_feature", agreement_test_feature)
+    np.save(f"{path}/test", test)
+    np.save(f"{path}/correlation", correlation)
+    dump(scaler, f"{path}/scaler.joblib")
+
+    return train_vali_data, agreement_data, meta_data

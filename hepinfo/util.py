@@ -451,7 +451,7 @@ def roc_auc_truncated(labels, predictions, tpr_thresholds=(0.2, 0.4, 0.6, 0.8),
 
 def load_tau_data(path):
 
-    if os.path.isfile(f"{path}/train_vali_data.npy"):
+    if os.path.isfile(f"{path}/X_train.npy"):
         X_train = np.load(f"{path}/X_train.npy")
         X_test = np.load(f"{path}/X_test.npy")
         y_train = np.load(f"{path}/y_train.npy")
@@ -533,6 +533,7 @@ def load_tau_data(path):
     agreement_weight = agreement_test["weight"]
     agreement_signal = agreement_test["signal"]
     agreement_test_feature = agreement_test.drop(columns=["id", "signal", "SPDhits", "weight"])
+    agreement_test_feature = scaler.transform(agreement_test_feature)
 
     train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
     agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]

@@ -5,7 +5,7 @@
     "validation_size": 0.1,
     "quantized_position": [true, false],
     "acitvation_last_layer": "sigmoid",
-    "activation_nonbinary": "relu",
+    "activation_nonbinary": "tanh",
     "gamma": 0.0,
     "verbose": 1,
     "print_summary": false,

@@ -68,6 +68,6 @@ if __name__ == '__main__':
             new_args = {
                 "bernoulli_path": args.bernoulli_path,
                 "model_path": f"{args.path_to_run_name}/{args.run_name}-{run}/model-split-{split}.keras",
-                "project_path": args.project_path,
+                "project_path": f"{args.run_name}-{run}/model-split-{split}-{args.project_name}"
             }
             synthesis_model(new_args)

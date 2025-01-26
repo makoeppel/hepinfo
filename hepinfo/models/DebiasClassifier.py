@@ -190,7 +190,7 @@ class DebiasClassifier(BaseModel):
             verbose=self.verbose,
             shuffle=True,
             validation_split=self.validation_size,
-        ).history
+        )
         # https://github.com/tensorflow/tensorflow/issues/14181
         # https://github.com/tensorflow/tensorflow/issues/30324
         gc.collect()

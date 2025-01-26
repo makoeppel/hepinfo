@@ -23,7 +23,7 @@ def create_run_scripts(args):
     # create run file
     run_file = ""
     for i in range(counter):
-        run_file += f"python train_supervised_model.py ../{args.data_path} hps-{i}.json ../{args.model_path} {args.run_name} {args.model_name} &\n"
+        run_file += f"python ../train_supervised_model.py ../{args.data_path} hps-{i}.json ../{args.model_path} {args.run_name}-{i} {args.model_name} &\n"
     with open(f"{args.run_name}-{args.model_name}/run.sh", "w") as f:
         f.write(run_file)
 

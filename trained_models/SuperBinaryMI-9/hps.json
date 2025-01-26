@@ -1,0 +1,1 @@
+{"kernel_regularizer": 0.0, "batch_size": 32, "hidden_layers": [16, 8], "validation_size": 0.1, "quantized_position": [true, false], "acitvation_last_layer": "sigmoid", "activation_nonbinary": "tanh", "gamma": 1, "verbose": 1, "print_summary": false, "last_layer_size": 2, "run_eagerly": false, "epoch": 10, "input_shape": [45], "name": "BinaryMI"}

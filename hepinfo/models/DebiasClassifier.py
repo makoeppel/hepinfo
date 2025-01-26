@@ -195,6 +195,8 @@ class DebiasClassifier(BaseModel):
         # https://github.com/tensorflow/tensorflow/issues/30324
         gc.collect()
 
+        return history
+
     def one_hot_convert(self, y, num_classes):
         arr = np.zeros((len(y), num_classes))
         for i, yi in enumerate(y):

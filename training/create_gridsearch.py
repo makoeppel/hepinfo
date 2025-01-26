@@ -7,18 +7,32 @@ def create_run_scripts(args):
     with open(args.hp_file) as f:
         hps = json.load(f)
 
-    counter = 0
-    for hidden_layers, quantized_position in \
-        zip([[64, 32, 16], [32, 16], [16, 8]], \
-            [[False, True, False], [True, False], [True, False]]):
-        for gamma in [0, 1, 10, 100]:
-            hps["hidden_layers"] = hidden_layers
-            hps["quantized_position"] = quantized_position
-            hps["gamma"] = gamma
-            
-            with open(f"{args.run_name}-{args.model_name}/hps-{counter}.json", "w") as f:
-                json.dump(hps, f)
-            counter += 1
+    if args.model_name == "BinaryMI":
+        counter = 0
+        for hidden_layers, quantized_position in \
+            zip([[64, 32, 16], [32, 16], [16, 8]], \
+                [[False, True, False], [True, False], [True, False]]):
+            for gamma in [0, 1, 10, 100]:
+                hps["hidden_layers"] = hidden_layers
+                hps["quantized_position"] = quantized_position
+                hps["gamma"] = gamma
+
+                with open(f"{args.run_name}-{args.model_name}/hps-{counter}.json", "w") as f:
+                    json.dump(hps, f)
+                counter += 1
+
+    if args.model_name == "DebiasClassifier":
+        counter = 0
+        for hidden_layers, quantized_position in [[64, 32, 16], [32, 16], [16, 8]]:
+            for bias_layers in [[32, 16], [10]]:
+                for gamma in [0, 1, 10, 100]:
+                    hps["hidden_layers"] = hidden_layers
+                    hps["quantized_position"] = quantized_position
+                    hps["gamma"] = gamma
+
+                    with open(f"{args.run_name}-{args.model_name}/hps-{counter}.json", "w") as f:
+                        json.dump(hps, f)
+                    counter += 1
 
     # create run file
     run_file = ""

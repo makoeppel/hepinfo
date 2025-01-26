@@ -144,7 +144,7 @@ class DebiasClassifier(BaseModel):
             'nn_out_bias': self.fair_loss,
         }
 
-        lossWeights = {'cls_part': float(1 - self.gamma), 'nn_out_bias': float(self.gamma)}
+        lossWeights = {'cls_part': 1, 'nn_out_bias': float(self.gamma)}
         metrics = {'cls_part': 'AUC' if self.last_layer_size == 1 else 'acc', 'nn_out_bias': 'acc'}
 
         self.model.compile(

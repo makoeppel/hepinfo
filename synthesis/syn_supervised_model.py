@@ -27,7 +27,7 @@ def synthesis_model(args):
     backend.register_template(HBernoulliFunctionTemplate)
 
     # Register HLS implementation
-    backend.register_source('/data/hlssynt-users/makoppel/hepinfo/tb/bernoulli.h')
+    backend.register_source(args.bernoulli_path)
 
     custom_objects = {
         "MILoss": MILoss

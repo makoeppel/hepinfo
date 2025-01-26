@@ -66,7 +66,7 @@ def train_model(args):
         else:
             raise ValueError(f"Model name {args.model_name} not found!")
 
-        history = model.fit(x_train=X_train, y_train=y_train, s_train=S_train)
+        history = model.fit(X_train, y_train, S_train)
         model.model.save(f"{args.model_path}/{args.run_name}/model-split-{i}.keras")
 
         with open(f"{args.model_path}/{args.run_name}/history-split-{i}.json", "w") as f:

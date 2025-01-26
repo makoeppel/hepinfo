@@ -27,37 +27,47 @@ def synthesis_model(args):
     backend.register_template(HBernoulliFunctionTemplate)
 
     # Register HLS implementation
-    backend.register_source(args.bernoulli_path)
+    backend.register_source(args["bernoulli_path"])
 
     custom_objects = {
         "MILoss": MILoss
     }
 
     # load the model
-    model = load_model(args.model_path, custom_objects=custom_objects)
+    model = load_model(args["model_path"], custom_objects=custom_objects)
 
     hmodel = hls4ml.converters.convert_from_keras_model(
         model,
         backend='Vitis',
-        output_dir=args.project_path
+        output_dir=args["project_path"]
     )
 
     # build the model
     hmodel.build(vsynth=True)
 
-    hls4ml.report.read_vivado_report(args.project_path)
+    hls4ml.report.read_vivado_report(args["project_path"])
 
-    # TODO: add results for this (resource usage, AUC value etc.)
+    # TODO: add results for this (resource usage, etc.)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Run load trained models")
-    parser.add_argument("project_path", help="Output path for the HLS4ML project.", type=str)
-    parser.add_argument("model_path", help="Model which should be load.", type=str)
+    parser.add_argument("project_name", help="Extra name of the HLS4ML project.", type=str)
+    parser.add_argument("path_to_run_name", help="Path where the runs are stored.", type=str)
+    parser.add_argument("run_name", help="Name of the run which should be load.", type=str)
+    parser.add_argument("run_amount", help="Number of runs.", type=int)
     parser.add_argument("bernoulli_path", help="Absolute path to the bernoulli.h layer.", type=str)
     args = parser.parse_args()
 
-    if os.path.isdir(args.project_path):
-        raise ValueError(f'The project path {args.project_path} is not empty.')
+    for run in range(args.run_amount):
+        for split in range(3):
 
-    synthesis_model(args)
+            if os.path.isdir(f"{args.run_name}-{run}/model-split-{split}-{args.project_name}"):
+                raise ValueError(f'The project path {args.run_name}-{run}/model-split-{split}-{args.project_name} is not empty.')
+
+            new_args = {
+                "bernoulli_path": args.bernoulli_path,
+                "model_path": f"{args.path_to_run_name}/{args.run_name}-{run}/model-split-{split}.keras",
+                "project_path": args.project_path,
+            }
+            synthesis_model(new_args)

@@ -4,8 +4,6 @@
     "hidden_layers": [64, 32],
     "bias_layers": [10],
     "validation_size": 0.1,
-    "quantized_position": [true, false],
-    "acitvation_last_layer": "sigmoid",
     "feature_activation": "tanh",
     "gamma": 0.0,
     "verbose": 1,

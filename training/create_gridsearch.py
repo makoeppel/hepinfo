@@ -23,11 +23,11 @@ def create_run_scripts(args):
 
     if args.model_name == "DebiasClassifier":
         counter = 0
-        for hidden_layers, quantized_position in [[64, 32, 16], [32, 16], [16, 8]]:
+        for hidden_layers in [[64, 32, 16], [32, 16], [16, 8]]:
             for bias_layers in [[32, 16], [10]]:
                 for gamma in [0, 1, 10, 100]:
                     hps["hidden_layers"] = hidden_layers
-                    hps["quantized_position"] = quantized_position
+                    hps["bias_layers"] = bias_layers
                     hps["gamma"] = gamma
 
                     with open(f"{args.run_name}-{args.model_name}/hps-{counter}.json", "w") as f:

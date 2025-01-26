@@ -50,7 +50,8 @@ def train_model(args):
 
         with open(args.hp_file) as f:
             hps = json.load(f)
-            hps["input_shape"] = (X_train.shape[1],)
+            if args.model_name == "BinaryMI":
+                hps["input_shape"] = (X_train.shape[1],)
             hps["name"] = args.model_name
 
         # store the used hps

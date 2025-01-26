@@ -1,6 +1,8 @@
 import os, argparse, json
 from hepinfo.util import *
 from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold
 
 
 def train_model(args):
@@ -8,58 +10,91 @@ def train_model(args):
     from hepinfo.models.BinaryMI import BinaryMI
     from hepinfo.models.DebiasClassifier import DebiasClassifier
 
-    train_vali_data, agreement_data, meta_data = load_tau_data(args.data_path)
-    X_train, X_test, y_train, y_test, S_train, S_test = train_vali_data
-    agreement_weight, agreement_signal, agreement_test_feature = agreement_data
-    test, correlation, scaler = meta_data
+    # load data
+    x, y, s, test, correlation, agreement_test = load_tau_data(args.data_path)
 
-    with open(args.hp_file) as f:
-        hps = json.load(f)
-        hps["input_shape"] = (X_train.shape[1],)
-        hps["name"] = args.model_name
+    # prepare agreement data
+    agreement_weight = agreement_test["weight"]
+    agreement_signal = agreement_test["signal"]
+    agreement_test_feature = agreement_test.drop(columns=["id", "signal", "SPDhits", "weight"]).to_numpy()
+    mass = correlation["mass"]
+    correlation = correlation.drop(['id', 'mass', 'SPDhits'], axis=1).to_numpy()
 
-    # stor the used hps
-    with open(f"{args.model_path}/{args.run_name}/hps.json", "w") as f:
-        json.dump(hps, f)
+    # get splits
+    skf = StratifiedKFold(n_splits=3)
+    skf.get_n_splits(x, y)
 
-    # get the model and train the model
-    if args.model_name == "BinaryMI":
-        model = BinaryMI(**hps)
-    elif args.model_name == "DebiasClassifier":
-        model = DebiasClassifier(**hps)
-    else:
-        raise ValueError(f"Model name {args.model_name} not found!")
-
-    history = model.fit(x_train=X_train, y_train=y_train, s_train=S_train)
-    model.model.save(f"{args.model_path}/{args.run_name}/model.keras")
-
-    with open(f"{args.model_path}/{args.run_name}/history.json", "w") as f:
-        json.dump(history.history, f)
-
-    # predict model performance
-    pred = model.predict_proba(X_test)
-
-    auc = roc_auc_score(y_test, pred[:,1])
-
-    pred_agree = model.predict_proba(agreement_test_feature)
-
-    ks_value = compute_ks(
-        pred_agree[:,1][agreement_signal == 0],
-        pred_agree[:,1][agreement_signal == 1],
-        agreement_weight[agreement_signal == 0],
-        agreement_weight[agreement_signal == 1]
-    )
-
-    check_correlation_features = correlation.drop(['id', 'mass', 'SPDhits'], axis=1)
-    pred_correlation = model.predict_proba(check_correlation_features)
-
-    cvm = compute_cvm(pred_correlation[:,1], correlation['mass'])
-
+    # get results
     results = {
-        "auc": auc,
-        "ks_value": ks_value,
-        "cvm": cvm
+        "auc": [],
+        "ks_value": [],
+        "cvm": []
     }
+
+    for i, (train_index, test_index) in enumerate(skf.split(x, y)):
+
+        # get splits
+        X_train = x[train_index]
+        X_test = x[test_index]
+        y_train = y[train_index]
+        y_test = y[test_index]
+        S_train = s[train_index]
+        S_test = s[test_index]
+
+        # transform data
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+        agreement_test_feature_scale = scaler.transform(agreement_test_feature)
+        correlation_scale = scaler.transform(correlation)
+
+        with open(args.hp_file) as f:
+            hps = json.load(f)
+            hps["input_shape"] = (X_train.shape[1],)
+            hps["name"] = args.model_name
+
+        # store the used hps
+        with open(f"{args.model_path}/{args.run_name}/hps.json", "w") as f:
+            json.dump(hps, f)
+
+        # get the model and train the model
+        if args.model_name == "BinaryMI":
+            model = BinaryMI(**hps)
+        elif args.model_name == "DebiasClassifier":
+            model = DebiasClassifier(**hps)
+        else:
+            raise ValueError(f"Model name {args.model_name} not found!")
+
+        history = model.fit(x_train=X_train, y_train=y_train, s_train=S_train)
+        model.model.save(f"{args.model_path}/{args.run_name}/model-split-{i}.keras")
+
+        with open(f"{args.model_path}/{args.run_name}/history-split-{i}.json", "w") as f:
+            json.dump(history.history, f)
+
+        # predict model performance
+        if args.model_name == "BinaryMI": pred = model.predict_proba(X_test)[:,1]
+        if args.model_name == "DebiasClassifier": pred = model.predict_proba(X_test)
+
+        auc = roc_auc_score(y_test, pred)
+
+        if args.model_name == "BinaryMI": pred_agree = model.predict_proba(agreement_test_feature_scale)[:,1]
+        if args.model_name == "DebiasClassifier": pred_agree = model.predict_proba(agreement_test_feature_scale)
+
+        ks_value = compute_ks(
+            pred_agree[agreement_signal == 0],
+            pred_agree[agreement_signal == 1],
+            agreement_weight[agreement_signal == 0],
+            agreement_weight[agreement_signal == 1]
+        )
+
+        if args.model_name == "BinaryMI": pred_correlation = model.predict_proba(correlation_scale)[:,1]
+        if args.model_name == "DebiasClassifier": pred_correlation = model.predict_proba(correlation_scale)
+
+        cvm = compute_cvm(pred_correlation, mass)
+
+        results["auc"].append(auc)
+        results["ks_value"].append(ks_value)
+        results["cvm"].append(cvm)
 
     with open(f"{args.model_path}/{args.run_name}/results.json", "w") as f:
         json.dump(results, f)

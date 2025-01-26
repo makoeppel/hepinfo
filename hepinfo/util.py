@@ -451,25 +451,15 @@ def roc_auc_truncated(labels, predictions, tpr_thresholds=(0.2, 0.4, 0.6, 0.8),
 
 def load_tau_data(path):
 
-    if os.path.isfile(f"{path}/X_train.npy"):
-        X_train = np.load(f"{path}/X_train.npy")
-        X_test = np.load(f"{path}/X_test.npy")
-        y_train = np.load(f"{path}/y_train.npy")
-        y_test = np.load(f"{path}/y_test.npy")
-        S_train = np.load(f"{path}/S_train.npy")
-        S_test = np.load(f"{path}/S_test.npy")
-        agreement_weight = np.load(f"{path}/agreement_weight.npy")
-        agreement_signal = np.load(f"{path}/agreement_signal.npy")
-        agreement_test_feature = np.load(f"{path}/agreement_test_feature.npy")
-        test = np.load(f"{path}/test.npy")
-        correlation = np.load(f"{path}/correlation.npy")
-        scaler = load(f"{path}/scaler.joblib")
+    if os.path.isfile(f"{path}/x.npy"):
+        x = np.load(f"{path}/x.npy")
+        y = np.load(f"{path}/y.npy")
+        s = np.load(f"{path}/s.npy")
+        test = pd.read_pickle(f"{path}/test")
+        correlation = pd.read_pickle(f"{path}/correlation")
+        agreement_test = pd.read_pickle(f"{path}/agreement_test")
 
-        train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
-        agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]
-        meta_data = [test, correlation, scaler]
-
-        return train_vali_data, agreement_data, meta_data
+        return x, y, s, test, correlation, agreement_test
 
     # load data
     # The label ‘signal’ being ‘1’ for signal events, ‘0’ for background events
@@ -520,6 +510,41 @@ def load_tau_data(path):
     x = training.drop(columns=["id", "production", "min_ANNmuon", "signal", "mass", "SPDhits"], axis = 1)
     x = pd.concat([agreement_train, x], ignore_index=True)
 
+    np.save(f"{path}/x", x)
+    np.save(f"{path}/y", y)
+    np.save(f"{path}/s", s)
+    test.to_pickle(f"{path}/test") 
+    correlation.to_pickle(f"{path}/correlation") 
+    agreement_test.to_pickle(f"{path}/agreement_test")
+
+    return x, y, s, test, correlation, agreement_test
+
+
+def load_tau_data_split(path):
+
+    if os.path.isfile(f"{path}/X_train.npy"):
+        X_train = np.load(f"{path}/X_train.npy")
+        X_test = np.load(f"{path}/X_test.npy")
+        y_train = np.load(f"{path}/y_train.npy")
+        y_test = np.load(f"{path}/y_test.npy")
+        S_train = np.load(f"{path}/S_train.npy")
+        S_test = np.load(f"{path}/S_test.npy")
+        agreement_weight = np.load(f"{path}/agreement_weight.npy")
+        agreement_signal = np.load(f"{path}/agreement_signal.npy")
+        agreement_test_feature = np.load(f"{path}/agreement_test_feature.npy")
+        test = np.load(f"{path}/test.npy")
+        correlation = np.load(f"{path}/correlation.npy")
+        mass = np.load(f"{path}/mass.npy")
+        scaler = load(f"{path}/scaler.joblib")
+
+        train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
+        agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]
+        meta_data = [test, correlation, scaler, mass]
+
+        return train_vali_data, agreement_data, meta_data
+
+    x, y, s, test, correlation, agreement_test = load_tau_data(path)
+
     # split the data into train and test set
     X_train, X_test, y_train, y_test, S_train, S_test = \
         train_test_split(x, y, s, test_size=0.333)
@@ -537,7 +562,9 @@ def load_tau_data(path):
 
     train_vali_data = [X_train, X_test, y_train, y_test, S_train, S_test]
     agreement_data = [agreement_weight, agreement_signal, agreement_test_feature]
-    meta_data = [test, correlation, scaler]
+    mass = correlation["mass"]
+    correlation = correlation.drop(['id', 'mass', 'SPDhits'], axis=1)
+    meta_data = [test, correlation, scaler, mass]
 
     np.save(f"{path}/X_train", X_train)
     np.save(f"{path}/X_test", X_test)
@@ -550,6 +577,7 @@ def load_tau_data(path):
     np.save(f"{path}/agreement_test_feature", agreement_test_feature)
     np.save(f"{path}/test", test)
     np.save(f"{path}/correlation", correlation)
+    np.save(f"{path}/mass", mass)
     dump(scaler, f"{path}/scaler.joblib")
 
     return train_vali_data, agreement_data, meta_data

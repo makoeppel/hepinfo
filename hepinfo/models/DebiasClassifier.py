@@ -2,6 +2,7 @@ import gc
 
 import keras
 import numpy as np
+import tensorflow as tf
 
 from hepinfo.models.BaseModel import *
 from hepinfo.models.GradReverse import GradReverse

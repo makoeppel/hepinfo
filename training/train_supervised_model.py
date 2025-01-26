@@ -89,7 +89,7 @@ def train_model(args):
         )
 
         if args.model_name == "BinaryMI": pred_correlation = model.predict_proba(correlation_scale)[:,1]
-        if args.model_name == "DebiasClassifier": pred_correlation = model.predict_proba(correlation_scale)
+        if args.model_name == "DebiasClassifier": pred_correlation = model.predict_proba(correlation_scale).reshape(-1)
 
         cvm = compute_cvm(pred_correlation, mass)
 

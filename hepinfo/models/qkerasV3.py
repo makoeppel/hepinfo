@@ -1252,6 +1252,42 @@ def safe_eval(eval_str, op_dict, *params, **kwparams):  # pylint: disable=invali
             return quantizer
 
 
+def _floor_through(x):
+  """Computes the floor operation using straight through estimator."""
+
+  return x + tf.stop_gradient(-x + tf.floor(x))
+
+
+def stochastic_round_po2(x):
+  """Performs stochastic rounding for the power of two."""
+  # TODO(b/237832905): test stochastic_round_po2 and constraint.
+  # because quantizer is applied after constraint.
+  y = tf.abs(x)
+  eps = tf.keras.backend.epsilon()
+  log2 = tf.keras.backend.log(2.0)
+
+  x_log2 = tf.round(tf.keras.backend.log(y + eps) / log2)
+  po2 = tf.cast(pow(2.0, tf.cast(x_log2, dtype="float32")), dtype="float32")
+  left_val = tf.where(po2 > y, x_log2 - 1, x_log2)
+  right_val = tf.where(po2 > y, x_log2, x_log2 + 1)
+  # sampling in [2**left_val, 2**right_val].
+  minval = 2 ** left_val
+  maxval = 2 ** right_val
+  val = tf.random.uniform(tf.shape(y), minval=minval, maxval=maxval)
+  # use y as a threshold to keep the probabliy [2**left_val, y, 2**right_val]
+  # so that the mean value of the sample should be y
+  x_po2 = tf.where(y < val, left_val, right_val)
+  """
+  x_log2 = stochastic_round(tf.keras.backend.log(y + eps) / log2)
+  sign = tf.sign(x)
+  po2 = (
+      tf.sign(x) *
+      tf.cast(pow(2.0, tf.cast(x_log2, dtype="float32")), dtype="float32")
+  )
+  """
+  return x_po2
+
+
 def _clip_power_of_two(x_abs,
                        min_exp,
                        max_exp,
@@ -1305,8 +1341,8 @@ def _clip_power_of_two(x_abs,
     if log2_rounding == "floor":
       x_log2 = _floor_through(tf.keras.backend.log(x_input) / log2)
     elif use_stochastic_rounding:
-      x_log2 = tf_utils.smart_cond(
-          K.learning_phase(),
+      x_log2 = tf.keras.tf_utils.smart_cond(
+          tf.keras.learning_phase(),
           lambda: stochastic_round_po2(x_input),
           lambda: _round_through(tf.keras.backend.log(x_input) / log2))
     else:

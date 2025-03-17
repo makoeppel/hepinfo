@@ -5,10 +5,10 @@ requires = [ "qkeras", "setuptools>=42", "six", "tensorflow", "wheel" ]
 
 [project]
 name = "hepinfo"
-version = "0.0.1"
+version = "0.1.2"
 description = "Mutual Information techniques for decorrelation of physics data"
 readme = "README.md"
-authors = [ { name = "Anonymous", email = "Anonymous@Anonymous.com" } ]
+authors = [ { name = "Marius Köppel", email = "mkoepp at phys.ethz.ch" } ]
 requires-python = ">=3.8"
 classifiers = [
   "License :: OSI Approved :: MIT License",
@@ -29,6 +29,10 @@ Issues = "https://github.com/makoeppel/hepinfo/issues"
 [tool.setuptools]
 packages = [ "hepinfo" ]
 package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hepinfo*"]
 
 [tool.ruff]
 target-version = "py310"

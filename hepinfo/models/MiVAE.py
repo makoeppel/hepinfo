@@ -1,8 +1,8 @@
 import keras
 import numpy as np
 import tensorflow as tf
-from keras import layers
-from keras.regularizers import L2
+from keras.api import layers
+from keras.api.regularizers import L2
 from sklearn.base import BaseEstimator
 
 try:

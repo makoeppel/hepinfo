@@ -12,9 +12,13 @@ import pandas as pd
 
 # from nptyping import NDArray
 from sklearn.base import BaseEstimator
-from squark.config import QuantizerConfig
-from squark.layers import QDense as SQDense
-from squark.regularizers import MonoL1
+
+try:
+    from squark.config import QuantizerConfig
+    from squark.layers import QDense as SQDense
+    from squark.regularizers import MonoL1
+except:
+    print("WARNING: BaseModel squark not present")
 
 from hepinfo.models.qkerasV3 import QActivation, QDense, BernoulliSampling
 from hepinfo.models.QuantFlow import TQActivation, TQDense

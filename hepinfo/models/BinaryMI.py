@@ -8,7 +8,11 @@ import keras
 from keras.api.saving import register_keras_serializable
 
 import numpy as np
-from squark.utils.sugar import FreeEBOPs
+
+try:
+    from squark.utils.sugar import FreeEBOPs
+except:
+    print("WARNING: BinaryMI squark not present")
 
 from hepinfo.models.BaseModel import BaseModel
 from hepinfo.models.QuantFlow import FreeBOPs

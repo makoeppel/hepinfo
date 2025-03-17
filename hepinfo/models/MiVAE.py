@@ -1,14 +1,18 @@
 import keras
 import numpy as np
 import tensorflow as tf
-from keras.api import layers, ops
-from keras.api.regularizers import L2
+from keras import layers
+from keras.regularizers import L2
 from sklearn.base import BaseEstimator
-from squark.config import QuantizerConfigScope, global_config
-from squark.layers import QDense as SQDense
-from squark.utils.sugar import FreeEBOPs
 
-from hepinfo.models.qkerasV3 import QActivation, QDense, quantized_sigmoid, BernoulliSampling
+try:
+    from squark.config import QuantizerConfigScope, global_config
+    from squark.layers import QDense as SQDense
+    from squark.utils.sugar import FreeEBOPs
+except:
+    print("WARNING: MiVAE squark not present")
+
+from hepinfo.models.qkerasV3 import QActivation, QDense, BernoulliSampling
 from hepinfo.models.QuantFlow import TQActivation, TQDense
 from hepinfo.util import mutual_information_bernoulli_loss
 

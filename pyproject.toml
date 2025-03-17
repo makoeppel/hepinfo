@@ -8,7 +8,7 @@ name = "hepinfo"
 version = "0.1.2"
 description = "Mutual Information techniques for decorrelation of physics data"
 readme = "README.md"
-authors = [ { name = "Marius Köppel", email = "mkoepp at phys.ethz.ch" } ]
+authors = [ { name = "Marius Köppel", email = "mkoepp@phys.ethz.ch" } ]
 requires-python = ">=3.8"
 classifiers = [
   "License :: OSI Approved :: MIT License",

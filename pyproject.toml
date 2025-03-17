@@ -22,8 +22,9 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 
-urls.Homepage = "https://anonymous.com"
-urls.Issues = "https://anonymous.com"
+[project.urls]
+Homepage = "https://github.com/makoeppel/hepinfo/"
+Issues = "https://github.com/makoeppel/hepinfo/issues"
 
 [tool.setuptools]
 packages = [ "hepinfo" ]

@@ -1,7 +1,7 @@
 import os, argparse
 
 
-def synthesis_model(args):
+def synthesis_model(args, idx):
 
     from tensorflow.keras.models import load_model
 
@@ -13,21 +13,22 @@ def synthesis_model(args):
     import hls4ml.converters
 
 
-    # Register the converter for custom Keras layer
-    hls4ml.converters.register_keras_layer_handler('BernoulliSampling', parse_bernoulli_layer)
+    if idx == 0:
+        # Register the converter for custom Keras layer
+        hls4ml.converters.register_keras_layer_handler('BernoulliSampling', parse_bernoulli_layer)
 
-    # Register the hls4ml's IR layer
-    hls4ml.model.layers.register_layer('BernoulliSampling', HBernoulli)
+        # Register the hls4ml's IR layer
+        hls4ml.model.layers.register_layer('BernoulliSampling', HBernoulli)
 
-    # Register the optimization passes (if any)
-    backend = hls4ml.backends.get_backend('Vitis')
+        # Register the optimization passes (if any)
+        backend = hls4ml.backends.get_backend('Vitis')
 
-    # Register template passes for the given backend
-    backend.register_template(HBernoulliConfigTemplate)
-    backend.register_template(HBernoulliFunctionTemplate)
+        # Register template passes for the given backend
+        backend.register_template(HBernoulliConfigTemplate)
+        backend.register_template(HBernoulliFunctionTemplate)
 
-    # Register HLS implementation
-    backend.register_source(args["bernoulli_path"])
+        # Register HLS implementation
+        backend.register_source(args["bernoulli_path"])
 
     custom_objects = {
         "MILoss": MILoss
@@ -59,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument("bernoulli_path", help="Absolute path to the bernoulli.h layer.", type=str)
     args = parser.parse_args()
 
+    cnt = 0
     for run in range(args.run_amount):
         for split in range(3):
 
@@ -70,4 +72,5 @@ if __name__ == '__main__':
                 "model_path": f"{args.path_to_run_name}/{args.run_name}-{run}/model-split-{split}.keras",
                 "project_path": f"{args.run_name}-{run}/model-split-{split}-{args.project_name}"
             }
-            synthesis_model(new_args)
+            synthesis_model(new_args, cnt)
+            cnt += 1
